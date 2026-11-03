@@ -98,10 +98,12 @@ class ScanResult:
 
 
 def _universe() -> dict[str, india.IndianSecurity]:
-    """NSE mainboard equities in the normal EQ series (excludes SME, ETFs, T2T)."""
+    """Large, mid and small caps in the normal EQ series (no SME, ETFs, T2T or micro caps:
+    micro caps lost money on breakouts in the 2024-26 test)."""
     return {
         s.yahoo: s for s in india.nse_universe().values()
         if s.segment == "EQUITY" and s.series == "EQ"
+        and india.cap_class(s.yahoo) in ("Large", "Mid", "Small")
     }
 
 
@@ -144,7 +146,7 @@ def run_scan(
     last = min(as_of, settled) if as_of else settled
     raw = download_daily(
         list(universe) + [NIFTY], period=HISTORY_PERIOD, stamp=settled.isoformat(),
-        progress=progress, refresh=refresh,
+        progress=progress, refresh=refresh, probe=NIFTY,
     )
     if NIFTY not in raw:
         raise RuntimeError("Yahoo returned no Nifty 50 data; try again in a few minutes (--refresh).")

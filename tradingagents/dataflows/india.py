@@ -223,6 +223,26 @@ def nse_universe() -> dict[str, IndianSecurity]:
         return {}
 
 
+@functools.lru_cache(maxsize=1)
+def _caps() -> dict[str, tuple[str, str]]:
+    try:
+        with open(_DATA / "nse_marketcap.csv", encoding="utf-8", newline="") as fh:
+            return {r["symbol"].upper(): (r["cap"], r["industry"]) for r in csv.DictReader(fh)}
+    except OSError:
+        return {}
+
+
+def cap_class(symbol: str) -> str:
+    """SEBI size band: Large (top 100), Mid (101-250), Small (251-500), Micro (below)."""
+    s = symbol.strip().upper().removesuffix(".NS")
+    return _caps().get(s, ("Micro", ""))[0]
+
+
+def industry(symbol: str) -> str:
+    s = symbol.strip().upper().removesuffix(".NS")
+    return _caps().get(s, ("", ""))[1]
+
+
 def lookup(symbol: str) -> IndianSecurity | None:
     """The NSE security a symbol (bare or ``.NS``) names, or None."""
     s = symbol.strip().upper()

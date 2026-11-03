@@ -71,18 +71,32 @@ def download_daily(
     stamp: str | None = None,
     progress=None,
     refresh: bool = False,
+    probe: str | None = None,
 ) -> dict[str, pd.DataFrame]:
     """``{symbol: OHLCV frame}`` of split/dividend-adjusted daily bars.
 
     ``stamp`` keys the cache (pass the date of the last settled session, so a
     run after the close refetches once and later runs that day reuse it).
     Symbols Yahoo returns nothing for are left out of the result.
+
+    ``probe`` names a symbol (e.g. the Nifty) whose latest bar must reach
+    ``stamp``: a cache that falls short is refetched, and a download that falls
+    short (Yahoo lagging) is returned but not cached, so a later run retries.
     """
+
+    def reaches(d: dict) -> bool:
+        if not probe or not stamp:
+            return True
+        frame = d.get(probe)
+        return frame is not None and not frame.empty and str(frame.index[-1].date()) >= stamp
+
     symbols = sorted(set(symbols))
     path = _cache_path(symbols, period, stamp) if stamp else None
     if path and not refresh and os.path.exists(path):
         try:
-            return pd.read_pickle(path)
+            cached = pd.read_pickle(path)
+            if reaches(cached):
+                return cached
         except Exception:  # a torn cache file is a miss
             logger.warning("bulk cache %s unreadable; refetching", path)
 
@@ -100,7 +114,7 @@ def download_daily(
         data.update(_split(frame, chunk))
         if progress:
             progress(min(i + _CHUNK, len(symbols)), len(symbols))
-    if path and data:
+    if path and data and reaches(data):
         pd.to_pickle(data, path)
     return data
 

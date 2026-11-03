@@ -71,3 +71,30 @@ The chosen rule (`tradingagents/scanner/breakout.py`, `DEFAULT_RULES`):
   holding window, but the backtest could not test that filter (Yahoo has no free
   history of past results dates).
 - Past results do not guarantee future returns. This is software, not investment advice.
+
+## 4. Four setups for the daily top 10 (`tradingagents scan`)
+
+The internet's standard simple swing setups were tested the same way, on every NSE
+stock, with 0.30% costs. None of them comes with a reliable published Indian-market record.
+
+| Setup (textbook rules) | 2022 - Jun 2024 | Jul 2024 - Sep 2026 | Last 12 months |
+|---|---|---|---|
+| 52-week breakout (above) | +0.12R | **+0.05R** | **+0.17R** |
+| Pre-breakout pivot: tight base 0-3% under the 52-week high, volume drying up, buy-stop over the high (Minervini-style VCP) | +0.12R | -0.19R | -0.12R |
+| Pullback: uptrend touches the 20-DMA, reversal day, buy-stop over its high, stop under the 5-day low | +0.17R | -0.18R | -0.15R |
+| RSI(2) < 10 above the 200-DMA, buy the open, exit on a close above the 5-DMA (Connors) | -0.01R | -0.03R | -0.01R |
+
+By market cap, **micro caps** (below the Nifty Smallcap 250) lost on every setup in
+the weak market, so the scans now use large, mid and small caps only. Without
+micro caps, the breakout earned **+0.14R (train) and +0.09R (test)**.
+
+Tightened variants of the other three (relative strength >= +20 pts, near the
+52-week high, breadth filters, RSI(2) < 5, stock above its 50-DMA) were all still
+negative in 2024-26, so they were not adopted (that would be curve-fitting).
+
+How `tradingagents scan` uses this: breakouts are **grade A**. The other setups
+are **grade B** only while their own record across NSE over the last 6 months
+(>= +0.05R on 20+ trades) and 12 months (> 0 on 40+ trades) is positive, which is
+recomputed on every scan. Otherwise they are **grade C** (half size, or paper trade).
+They were profitable in the rising 2022-24 market, so they should come back when the
+market trends again, and the grade will show when they do.

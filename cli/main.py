@@ -190,6 +190,39 @@ def breakout(
 
 
 @app.command()
+def scan(
+    capital: float = typer.Option(500_000, "--capital", help="Your trading capital in INR, for position sizes"),
+    risk: float = typer.Option(1.0, "--risk", help="Percent of capital to risk per trade"),
+    top: int = typer.Option(10, "--top", help="How many ideas to list"),
+    date: str = typer.Option(None, "--date", help="Ideas as of an earlier close, YYYY-MM-DD"),
+    refresh: bool = typer.Option(False, "--refresh", help="Download fresh data even if today's is cached"),
+    as_json: bool = typer.Option(False, "--json", help="Print the ideas as JSON"),
+    no_news: bool = typer.Option(False, "--no-news", help="Skip the headline check (faster)"),
+):
+    """Top NSE trade ideas from four chart setups, graded, with news and a bull-vs-bear case.
+
+    Every idea has entry, stoploss, target, reward:risk, exit date, size and its cap
+    class. Free data, no API key. Run after 16:30 IST.
+    """
+    from cli.scan import scan_command
+
+    try:
+        raise typer.Exit(code=scan_command(capital, risk, top, date, refresh, as_json, no_news))
+    except (RuntimeError, ValueError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+
+
+def _register_journal():
+    from cli.journal import app as journal_app
+
+    app.add_typer(journal_app, name="journal")
+
+
+_register_journal()
+
+
+@app.command()
 def headlines(
     ticker: str = typer.Argument(..., help="Stock, e.g. RELIANCE or TCS.NS"),
     days: int = typer.Option(7, "--days", help="Look back this many days"),

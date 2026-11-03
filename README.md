@@ -231,6 +231,28 @@ TradingAgents works with any market Yahoo Finance covers, using the exchange-suf
 - China A-shares: Shanghai `.SS`, Shenzhen `.SZ` (e.g. `600519.SS` for Kweichow Moutai)
 - Crypto: `BTC-USD`, `ETH-USD`
 
+### Daily top-10 trade ideas, trade journal (free, no API key)
+
+```bash
+tradingagents scan --capital 500000 --risk 1       # top 10 ideas after the close (run after 16:30 IST)
+tradingagents journal capital 500000              # once: your trading capital
+tradingagents journal add --from-scan 1 --price 10010   # you bought idea #1 at 10010
+tradingagents journal add TCS --price 3000 --qty 10 --stop 2900 --target 3200
+tradingagents journal close 1 --price 10500       # you sold trade #1
+tradingagents journal list --all                  # positions, live price, P&L, R
+tradingagents journal stats                       # P&L, win rate, avg R, charges, capital used/free
+```
+
+`scan` checks four chart setups on every NSE large, mid and small cap (no penny or micro caps):
+52-week breakout, pre-breakout pivot, pullback to the 20-DMA, and RSI(2) dip. It reads each
+stock's headlines (Google News India) and results date, and argues every idea bull vs bear.
+Each idea comes with its grade, cap class, sector, entry, stoploss, target, reward:risk,
+exit-by date, quantity, capital and maximum loss. Grade A (breakouts) is the only setup that
+stayed profitable in both the rising and the weak market. B and C show whether the other
+setups' strategies are working right now. The full table is saved to
+`~/.tradingagents/scans/top-<date>.md`. In Claude Code, `/nse-breakout` runs the scan with a
+real bull, bear and judge debate on each idea, and logs your trades.
+
 ### NSE breakout scanner (free, no API key)
 
 ```bash

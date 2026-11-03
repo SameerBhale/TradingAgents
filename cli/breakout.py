@@ -46,7 +46,7 @@ def render_markdown(result: dict, capital: float, risk_pct: float) -> str:
     lines = [
         f"# NSE breakout scan - signals on the {result['as_of']} close",
         "",
-        f"Universe: {result['universe_size']} NSE mainboard stocks (EQ series), "
+        f"Universe: {result['universe_size']} NSE large, mid and small caps (EQ series), "
         f"{result['scanned']} with a full year of data. No penny stocks: price >= Rs 100, "
         "turnover >= Rs 10 crore/day.",
         "",

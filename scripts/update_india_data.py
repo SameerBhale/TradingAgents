@@ -35,6 +35,14 @@ SME_URL = "https://nsearchives.nseindia.com/emerge/corporates/content/SME_EQUITY
 ETF_URL = "https://nsearchives.nseindia.com/content/equities/eq_etfseclist.csv"
 HOLIDAY_URL = "https://www.nseindia.com/api/holiday-master?type=trading"
 FIELDS = ["symbol", "name", "series", "segment", "isin", "listing_date"]
+# SEBI's size bands (rank by market cap: 1-100 large, 101-250 mid, 251+ small),
+# as NSE's index lists carry them; below the Smallcap 250 is micro cap.
+CAP_LISTS = {
+    "Large": "https://nsearchives.nseindia.com/content/indices/ind_nifty100list.csv",
+    "Mid": "https://nsearchives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
+    "Small": "https://nsearchives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
+    "Micro": "https://nsearchives.nseindia.com/content/indices/ind_niftymicrocap250_list.csv",
+}
 
 
 def _csv(session: requests.Session, url: str) -> list[dict[str, str]]:
@@ -78,6 +86,14 @@ def fetch_symbols(session: requests.Session) -> list[dict[str, str]]:
     return sorted((r for r in found.values() if r["symbol"]), key=lambda r: r["symbol"])
 
 
+def fetch_caps(session: requests.Session) -> list[dict[str, str]]:
+    rows = []
+    for cap, url in CAP_LISTS.items():
+        for row in _csv(session, url):
+            rows.append({"symbol": row["SYMBOL"], "cap": cap, "industry": row.get("INDUSTRY", "")})
+    return rows
+
+
 def fetch_holidays(session: requests.Session) -> dict[str, str]:
     # The API refuses requests without the cookies its home page sets.
     session.get("https://www.nseindia.com/", timeout=30)
@@ -101,6 +117,13 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(symbols)
     print(f"nse_symbols.csv: {len(symbols)} securities")
+
+    caps = fetch_caps(session)
+    with open(OUT / "nse_marketcap.csv", "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["symbol", "cap", "industry"])
+        writer.writeheader()
+        writer.writerows(caps)
+    print(f"nse_marketcap.csv: {len(caps)} classified")
 
     holiday_file = OUT / "nse_holidays.json"
     known = json.loads(holiday_file.read_text(encoding="utf-8")) if holiday_file.exists() else {}
