@@ -53,7 +53,9 @@ def analyze(
         help="JSON file with current holdings and cash, so the trader, risk and "
         "portfolio agents size against your actual position.",
     ),
-    ticker: str = typer.Option(None, "--ticker", help="Ticker to analyze, e.g. NVDA or 0700.HK; skips the prompt"),
+    ticker: str = typer.Option(
+        None, "--ticker", help="Ticker to analyze, e.g. RELIANCE, TCS.NS, RELIANCE.BO or NIFTY; skips the prompt"
+    ),
     date: str = typer.Option(None, "--date", help="Analysis date, YYYY-MM-DD; skips the prompt"),
     analysts: str = typer.Option(
         None, "--analysts", help="Comma-separated analysts, e.g. market,news; skips the prompt"
@@ -158,6 +160,120 @@ def backtest(
         console.print(f"[yellow]failed:[/yellow] {ticker} {date}: {reason}")
     for ticker, reason in result.settlement_failures:
         console.print(f"[yellow]unsettled:[/yellow] {ticker}: {reason}")
+
+
+@app.command()
+def breakout(
+    capital: float = typer.Option(500_000, "--capital", help="Your trading capital in INR, for position sizes"),
+    risk: float = typer.Option(1.0, "--risk", help="Percent of capital to risk per trade (loss at the stoploss)"),
+    top: int = typer.Option(5, "--top", help="Most breakout trades to show"),
+    date: str = typer.Option(None, "--date", help="Scan as of an earlier session, YYYY-MM-DD (to review past signals)"),
+    refresh: bool = typer.Option(False, "--refresh", help="Download fresh data even if today's is cached"),
+    as_json: bool = typer.Option(False, "--json", help="Print the scan as JSON"),
+    deep: int = typer.Option(
+        0, "--deep",
+        help="Also run the full multi-agent debate (Claude Fable 5.1) on the top N picks; needs ANTHROPIC_API_KEY",
+    ),
+):
+    """Scan every NSE stock for breakouts: entry, stoploss, target, R:R and holding period.
+
+    Free data, no API key. Run it after 16:00 IST (or before 09:00) and place the
+    orders for the next session.
+    """
+    from cli.breakout import breakout_command
+
+    try:
+        raise typer.Exit(code=breakout_command(capital, risk, top, date, refresh, as_json, deep))
+    except (RuntimeError, ValueError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+
+
+@app.command()
+def headlines(
+    ticker: str = typer.Argument(..., help="Stock, e.g. RELIANCE or TCS.NS"),
+    days: int = typer.Option(7, "--days", help="Look back this many days"),
+):
+    """Recent news headlines for a stock: Google News (India), then Yahoo Finance. Free."""
+    from datetime import date as _date, timedelta
+
+    from cli.prompts import parse_ticker
+    from tradingagents.dataflows import india
+    from tradingagents.dataflows.date_window import get_current_date
+    from tradingagents.dataflows.india import IST
+    from tradingagents.dataflows.vendors import google_news
+
+    try:
+        symbol = parse_ticker(ticker)
+    except ValueError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    sec = india.lookup(symbol) if symbol.endswith(".NS") else None
+    query = f'"{sec.name.replace(" Limited", "").replace(" Ltd", "")}"' if sec else symbol.split(".")[0]
+    try:
+        items = google_news.headlines(f"{query} share OR stock", days=days)
+    except Exception:  # fall through to Yahoo
+        items = []
+    if items:
+        print(f"Headlines for {symbol} ({sec.name if sec else symbol}), last {days} days, Google News India:")
+        for it in items:
+            stamp = it["published"].astimezone(IST).strftime("%d %b %H:%M IST")
+            print(f"- [{stamp}] {it['title']}")
+        return
+    from tradingagents.dataflows.vendors.yahoo.news import get_news_yfinance
+
+    end = get_current_date()
+    start = (_date.fromisoformat(end) - timedelta(days=days)).isoformat()
+    try:
+        print(get_news_yfinance(symbol, start, end))
+    except Exception as exc:  # the vendor reports an outage as an exception
+        console.print(f"[yellow]No headlines found for {symbol}: {escape(str(exc))}[/yellow]")
+        raise typer.Exit(code=1) from None
+
+
+@app.command("market-status")
+def market_status_command():
+    """Where the NSE/BSE trading day stands now, on the IST clock, and upcoming holidays."""
+    from datetime import date
+
+    from tradingagents.dataflows import india
+
+    status = india.market_status()
+    console.print(status.describe())
+    upcoming = [(d, n) for d, n in india.holidays().items() if date.fromisoformat(d) >= status.now.date()]
+    if upcoming:
+        console.print("\nUpcoming NSE/BSE trading holidays:")
+        for day, name in upcoming[:8]:
+            console.print(f"  {day} ({date.fromisoformat(day):%a})  {escape(name)}")
+
+
+@app.command()
+def symbols(
+    query: str = typer.Argument(None, help="Part of an NSE symbol or company name, e.g. TATA or bank"),
+    limit: int = typer.Option(25, "--limit", help="Most matches to list"),
+    segment: str = typer.Option(None, "--segment", help="Only EQUITY, SME or ETF"),
+):
+    """Search the bundled universe of every NSE-listed equity, SME stock and ETF."""
+    from tradingagents.dataflows import india
+
+    universe = india.nse_universe()
+    if not query:
+        counts: dict[str, int] = {}
+        for sec in universe.values():
+            counts[sec.segment] = counts.get(sec.segment, 0) + 1
+        console.print(f"{len(universe)} NSE securities: " + ", ".join(f"{n} {s}" for s, n in sorted(counts.items())))
+        console.print("Search with: tradingagents symbols <text>")
+        return
+    matches = india.search(query, limit=10_000)
+    if segment:
+        matches = [m for m in matches if m.segment == segment.strip().upper()]
+    if not matches:
+        console.print(f"[yellow]No NSE security matches {escape(query)!r}.[/yellow]")
+        raise typer.Exit(code=1)
+    for sec in matches[:limit]:
+        console.print(f"{sec.yahoo:<20} {sec.segment:<7} {sec.series:<3} {escape(sec.name)}")
+    if len(matches) > limit:
+        console.print(f"[dim]... {len(matches) - limit} more; raise --limit to see them[/dim]")
 
 
 # The plans `login` and `logout` take: the providers signed in to, not keyed.

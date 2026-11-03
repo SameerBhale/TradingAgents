@@ -4,7 +4,7 @@ import os
 import pandas as pd
 import yfinance as yf
 
-from tradingagents.dataflows.config import get_config
+from tradingagents.dataflows.config import get_config, get_market
 from tradingagents.dataflows.errors import NoMarketDataError
 from tradingagents.dataflows.files import replace_file
 from tradingagents.dataflows.symbols import normalize_symbol, safe_ticker_component
@@ -152,10 +152,25 @@ def _cache_is_fresh(data_file, as_of_dt, now) -> bool:
     whose ``Close`` is not the closing price, and row inspection cannot tell it
     from a final one (#1150).
     """
-    written = pd.Timestamp.fromtimestamp(os.path.getmtime(data_file))
+    written = pd.Timestamp.fromtimestamp(os.path.getmtime(data_file), tz=now.tz)
     if written.date() != now.date():
         return False
-    return as_of_dt.date() < now.date() or (now - written).total_seconds() <= OHLCV_CACHE_TTL_SECONDS
+    if as_of_dt.date() < now.date() or (now - written).total_seconds() <= OHLCV_CACHE_TTL_SECONDS:
+        return True
+    # On the IST clock, a download made after today's NSE/BSE session settled
+    # (16:00 IST) already holds the final daily candle: no refetch is needed.
+    if get_market() == "india":
+        from tradingagents.dataflows.india import session_settled
+
+        return session_settled(now.date(), written.to_pydatetime())
+    return False
+
+
+def _now_for_market() -> pd.Timestamp:
+    """Now on the configured market's clock: IST for India, the machine's clock otherwise."""
+    if get_market() == "india":
+        return pd.Timestamp.now(tz="Asia/Kolkata")
+    return pd.Timestamp.today()
 
 
 def load_ohlcv(symbol: str, as_of_date: str, fill_gaps: bool = True) -> pd.DataFrame:
@@ -179,7 +194,7 @@ def load_ohlcv(symbol: str, as_of_date: str, fill_gaps: bool = True) -> pd.DataF
     as_of_dt = pd.to_datetime(as_of_date).normalize()
 
     # One cache file per symbol, holding the latest 5y-to-today download.
-    now = pd.Timestamp.today()
+    now = _now_for_market()
     start_date = now - pd.DateOffset(years=5)
     start_str = start_date.strftime("%Y-%m-%d")
     # yfinance ``end`` is EXCLUSIVE; request tomorrow so today's row is included

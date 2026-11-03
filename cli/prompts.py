@@ -16,7 +16,17 @@ from tradingagents.llm_clients.api_key_env import get_api_key_env
 from tradingagents.llm_clients.model_catalog import get_model_options
 from tradingagents.llm_clients.openai_client import OPENAI_COMPATIBLE_PROVIDERS, SIGNED_IN_PROVIDERS
 
-TICKER_INPUT_EXAMPLES = "SPY, 0700.HK, BTC-USD"
+
+def _india_market() -> bool:
+    from tradingagents.dataflows.config import get_market
+
+    return get_market() == "india"
+
+
+TICKER_INPUT_EXAMPLES = (
+    "RELIANCE, TCS.NS, RELIANCE.BO, NIFTY" if _india_market() else "SPY, 0700.HK, BTC-USD"
+)
+DEFAULT_TICKER = "^NSEI" if _india_market() else "SPY"
 
 ANALYST_CHOICES = [
     ("Market Analyst", AnalystType.MARKET),
@@ -36,12 +46,21 @@ _MENU_STYLE = questionary.Style([
 ])
 
 
+def _bse_code_hint(value: str) -> str | None:
+    """Under the India market, why a numeric BSE scrip code cannot be priced."""
+    if not _india_market():
+        return None
+    from tradingagents.dataflows.india import bse_code_hint
+
+    return bse_code_hint(value)
+
+
 def is_valid_ticker_input(value: str) -> bool:
     """Whether a ticker entry names a symbol the run can use.
 
     The symbol it resolves to (``XAUUSD+`` -> ``GC=F``) must pass the data
     layer's own check, so the prompt refuses exactly what the run would.
-    Empty input is allowed (it defaults to SPY downstream).
+    Empty input is allowed (it defaults to the Nifty 50, or SPY for the US market).
     """
     if not value.strip():
         return True
@@ -61,9 +80,11 @@ def get_ticker() -> str:
     """
     ticker = questionary.text(
         f"Enter ticker symbol (e.g. {TICKER_INPUT_EXAMPLES}):",
+        # A string is shown as the error; True accepts the entry.
         validate=lambda x: (
-            is_valid_ticker_input(x)
-            or "Please enter a valid ticker symbol, e.g. AAPL, 000404.SZ, 0700.HK, GC=F."
+            _bse_code_hint(x)
+            or is_valid_ticker_input(x)
+            or f"Please enter a valid ticker symbol, e.g. {TICKER_INPUT_EXAMPLES}."
         ),
         style=questionary.Style(
             [
@@ -77,11 +98,13 @@ def get_ticker() -> str:
         console.print("\n[red]No ticker symbol provided. Exiting...[/red]")
         exit(1)
 
-    return normalize_ticker_symbol(ticker) if ticker.strip() else "SPY"
+    return normalize_ticker_symbol(ticker) if ticker.strip() else DEFAULT_TICKER
 
 
 def parse_ticker(value: str) -> str:
     """A ticker given on the command line, canonical; empty or malformed is refused."""
+    if hint := _bse_code_hint(value):
+        raise ValueError(hint)
     if not value.strip() or not is_valid_ticker_input(value):
         raise ValueError(f"not a ticker symbol: {value!r} (e.g. {TICKER_INPUT_EXAMPLES})")
     return normalize_ticker_symbol(value)
@@ -93,7 +116,9 @@ def parse_analysis_date(value: str) -> str:
         day = datetime.datetime.strptime(value.strip(), "%Y-%m-%d").date()
     except ValueError:
         raise ValueError(f"not a date: {value!r}; use YYYY-MM-DD") from None
-    if day > datetime.date.today():
+    from tradingagents.dataflows.date_window import get_current_date
+
+    if day.isoformat() > get_current_date():
         raise ValueError(f"{value} is in the future")
     return day.isoformat()
 

@@ -111,6 +111,7 @@ MODEL_OPTIONS: ProviderModeOptions = {
     },
     "anthropic": {
         "quick": [
+            ("Claude Fable 5.1 - Most capable, demanding long-horizon reasoning", "claude-fable-5-1"),
             ("Claude Sonnet 5 - Best speed and intelligence balance", "claude-sonnet-5"),
             ("Claude Haiku 4.5 - Fastest with near-frontier intelligence", "claude-haiku-4-5"),
             ("Custom model ID", "custom"),

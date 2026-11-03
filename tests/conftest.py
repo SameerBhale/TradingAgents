@@ -25,6 +25,8 @@ def _blank_settings_overlay():
 
 
 _blank_settings_overlay()
+# The upstream suite asserts the US defaults; the India tests set their market.
+os.environ["TRADINGAGENTS_MARKET"] = "us"
 
 
 def _own_file_locations():

@@ -72,4 +72,12 @@ def get_config() -> dict:
     return deepcopy(_config)
 
 
+
+def get_market() -> str:
+    """The configured market (``india`` or ``us``), without copying the whole config."""
+    scoped = _run_config.get()
+    source = scoped if scoped is not None else (_config or default_config.DEFAULT_CONFIG)
+    return str(source.get("market") or "india").strip().lower()
+
+
 initialize_config()

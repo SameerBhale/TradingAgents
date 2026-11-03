@@ -13,6 +13,8 @@ def _config_with_env(monkeypatch, **overrides):
     """The defaults as the environment given here would set them."""
     for key in list(default_config_module._ENV_OVERRIDES):
         monkeypatch.delenv(key, raising=False)
+    # These tests assert the upstream (US market) defaults.
+    overrides.setdefault("TRADINGAGENTS_MARKET", "us")
     for key, val in overrides.items():
         monkeypatch.setenv(key, val)
     return default_config_module.build_default_config()

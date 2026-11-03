@@ -27,6 +27,17 @@ from .setup import GraphSetup
 logger = logging.getLogger(__name__)
 
 
+def _indian_listing(company_name, asset_type: str):
+    """``RELIANCE`` -> ``RELIANCE.NS`` (likewise ``NSE:TCS``, ``BSE:INFY``, ``NIFTY``) under
+    the India market, so every agent and tool sees the exchange-qualified symbol."""
+    if asset_type != "stock" or not isinstance(company_name, str):
+        return company_name
+    from tradingagents.dataflows.config import get_market
+    from tradingagents.dataflows.india import resolve_india_symbol
+
+    return resolve_india_symbol(company_name, bare_to_nse=get_market() == "india") or company_name
+
+
 def _validate_trade_date(trade_date) -> str:
     """The run date as a canonical ``YYYY-MM-DD`` string no later than today."""
     value = str(trade_date)
@@ -181,6 +192,8 @@ class TradingAgentsGraph:
         PortfolioRating enum.
         """
         trade_date = _validate_trade_date(trade_date)
+        with run_config(self.config):
+            company_name = _indian_listing(company_name, asset_type)
 
         with run_config(self.config), \
                 self.checkpoint_scope(company_name, trade_date, asset_type, portfolio) as thread_id_value:

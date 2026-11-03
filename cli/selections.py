@@ -1,6 +1,5 @@
 """The interactive choices for a run: ticker, date, analysts, depth, provider and models."""
 
-import datetime
 import os
 from pathlib import Path
 
@@ -14,6 +13,8 @@ from cli.display import (
 )
 from cli.prefs import load_last_run, sanitize, save_last_run
 from cli.prompts import (
+    DEFAULT_TICKER,
+    TICKER_INPUT_EXAMPLES,
     ask_anthropic_effort,
     ask_gemini_thinking_config,
     ask_glm_region,
@@ -37,6 +38,7 @@ from cli.prompts import (
     select_research_depth,
     select_shallow_thinking_agent,
 )
+from tradingagents.dataflows.date_window import get_current_date
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.llm_clients.factory import REASONING_EFFORT_PROVIDERS
 from tradingagents.llm_clients.openai_client import check_endpoint
@@ -171,11 +173,13 @@ def _prompt_selections(prefs, flags):
         console.print(
             create_question_box(
                 "Step 1: Ticker Symbol",
-                "Enter the ticker, with exchange suffix when needed (e.g. SPY, 0700.HK, BTC-USD)",
-                "SPY",
+                "Enter the ticker, with exchange suffix when needed (e.g. "
+                f"{TICKER_INPUT_EXAMPLES})",
+                DEFAULT_TICKER,
             )
         )
         selected_ticker = get_ticker()
+    _announce_indian_listing(selected_ticker)
     asset_type = detect_asset_type(selected_ticker)
     # Only announce when it's not the default stock path, to avoid printing
     # "stock" on every run.
@@ -189,7 +193,7 @@ def _prompt_selections(prefs, flags):
         analysis_date = _from_flag(parse_analysis_date, flags["date"])
         console.print(f"[green]✓ Analysis date from --date:[/green] {analysis_date}")
     else:
-        default_date = datetime.datetime.now().strftime("%Y-%m-%d")
+        default_date = get_current_date()
         console.print(
             create_question_box(
                 "Step 2: Analysis Date",
@@ -371,12 +375,36 @@ def _prompt_selections(prefs, flags):
     }
 
 
+def _announce_indian_listing(ticker: str) -> None:
+    """Name the NSE listing and where the IST trading day stands."""
+    from tradingagents.dataflows import india
+
+    if not india.is_indian_symbol(ticker):
+        return
+    security = india.lookup(ticker) if ticker.upper().endswith(".NS") else None
+    if security:
+        console.print(
+            f"[green]NSE {security.segment.lower()}:[/green] {security.name} "
+            f"(series {security.series}, ISIN {security.isin})"
+        )
+    elif ticker.upper().endswith(".NS"):
+        console.print(
+            f"[yellow]{ticker} is not in the bundled NSE symbol list; check the symbol, "
+            "or refresh it with scripts/update_india_data.py.[/yellow]"
+        )
+    status = india.market_status()
+    console.print(f"[cyan]{status.describe()}[/cyan]")
+    if status.is_trading_day and not india.session_settled(status.now.date()):
+        console.print(
+            "[yellow]Today's daily candle is not final until the session settles "
+            "(~16:00 IST); an analysis dated today reads the live price.[/yellow]"
+        )
+
+
 def get_analysis_date():
     """Get the analysis date from user input."""
     while True:
-        date_str = typer.prompt(
-            "", default=datetime.datetime.now().strftime("%Y-%m-%d")
-        )
+        date_str = typer.prompt("", default=get_current_date())
         try:
             return parse_analysis_date(date_str)
         except ValueError as exc:

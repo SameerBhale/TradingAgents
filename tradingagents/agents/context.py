@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from tradingagents.dataflows.date_window import is_historical
+from tradingagents.dataflows.india import exchange_note
 from tradingagents.dataflows.vendors.yahoo.fundamentals import get_company_profile
 
 logger = logging.getLogger(__name__)
@@ -128,8 +129,10 @@ def build_instrument_context(
     context = (
         f"The {instrument_label} to analyze is `{ticker}`. "
         "The tools serve this instrument; refer to it by this exact ticker in every report and recommendation, "
-        "preserving any exchange suffix (e.g. `.TO`, `.L`, `.HK`, `.T`, `-USD`)."
+        "preserving any exchange suffix (e.g. `.NS`, `.BO`, `.TO`, `.L`, `.HK`, `-USD`)."
     )
+    if not is_crypto:
+        context += exchange_note(ticker)
 
     identity = identity or {}
     name = identity.get("company_name") or identity.get("name")

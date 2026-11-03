@@ -11,6 +11,9 @@ config = DEFAULT_CONFIG.copy()
 # Initialize with custom config
 ta = TradingAgentsGraph(debug=True, config=config)
 
-# forward propagate
-_, decision = ta.propagate("NVDA", "2026-09-01")
+# The default market is India (TRADINGAGENTS_MARKET=india): pass an NSE symbol
+# (RELIANCE, TCS.NS), a BSE listing (RELIANCE.BO) or an index (NIFTY). Dates are
+# trading days on the IST clock; a run dated today reads the live price until the
+# session settles at ~16:00 IST.
+_, decision = ta.propagate("RELIANCE", "2026-09-01")
 print(decision)

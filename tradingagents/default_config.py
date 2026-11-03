@@ -8,6 +8,7 @@ _TRADINGAGENTS_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
 # of the existing default, so users can keep writing plain strings in
 # their .env file.
 _ENV_OVERRIDES = {
+    "TRADINGAGENTS_MARKET":               "market",
     "TRADINGAGENTS_LLM_PROVIDER":         "llm_provider",
     "TRADINGAGENTS_DEEP_THINK_LLM":       "deep_think_llm",
     "TRADINGAGENTS_QUICK_THINK_LLM":      "quick_think_llm",
@@ -74,13 +75,74 @@ def _apply_env_overrides(config: dict) -> dict:
     return config
 
 
+# The default market. "india" analyzes NSE/BSE listings on the IST clock;
+# "us" restores the upstream US defaults. Set TRADINGAGENTS_MARKET to switch.
+DEFAULT_MARKET = "india"
+
+# What the India market changes over the US defaults. Applied when the package
+# builds its defaults; pass ``india_preset()`` into a config of your own to get
+# the same settings programmatically.
+INDIA_PRESET = {
+    "market": "india",
+    "market_timezone": "Asia/Kolkata",
+    "global_news_queries": [
+        "RBI monetary policy repo rate inflation India",
+        "Sensex Nifty stock market India outlook",
+        "FII DII flows Indian equities rupee",
+        "SEBI regulation India capital markets",
+        "India GDP budget fiscal deficit economy",
+        "crude oil prices India impact",
+        "US Federal Reserve global markets emerging markets",
+    ],
+    # SEC EDGAR serves US filers only; Yahoo serves NSE/BSE statements.
+    "data_vendors": {"fundamental_data": "yfinance"},
+    # Claude Fable 5.1 for every agent (set TRADINGAGENTS_QUICK_THINK_LLM=claude-sonnet-5
+    # to run the analysts and debaters on a cheaper model).
+    "llm_provider": "anthropic",
+    "deep_think_llm": "claude-fable-5-1",
+    "quick_think_llm": "claude-fable-5-1",
+    # A ticker without an Indian suffix (an index, a US ADR) is compared to the Nifty 50.
+    "benchmark_map": {"": "^NSEI"},
+}
+
+
+def india_preset() -> dict:
+    from copy import deepcopy
+
+    return deepcopy(INDIA_PRESET)
+
+
+def _apply_market(config: dict) -> dict:
+    market = str(config.get("market") or DEFAULT_MARKET).strip().lower()
+    if market not in ("india", "us"):
+        raise ValueError(f"Invalid value for TRADINGAGENTS_MARKET: {market!r} (use india or us)")
+    config["market"] = market
+    if market == "india":
+        explicit = {key for env, key in _ENV_OVERRIDES.items() if os.environ.get(env)}
+        for key, value in india_preset().items():
+            if key in explicit:
+                continue
+            if isinstance(value, dict) and isinstance(config.get(key), dict):
+                config[key].update(value)
+            else:
+                config[key] = value
+    return config
+
+
 def build_default_config() -> dict:
     """The built-in defaults with the TRADINGAGENTS_* environment folded in.
 
     Read when the package is imported, as DEFAULT_CONFIG; call it again to see
     the environment as it is now.
     """
+    return _apply_market(_build_base_config())
+
+
+def _build_base_config() -> dict:
     return _apply_env_overrides({
+        # Which market the run trades: "india" (NSE/BSE, IST) or "us".
+        "market": DEFAULT_MARKET,
+        "market_timezone": "America/New_York",
         "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR") or os.path.join(_TRADINGAGENTS_HOME, "logs"),
         "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR") or os.path.join(_TRADINGAGENTS_HOME, "cache"),
         "memory_log_path": os.getenv("TRADINGAGENTS_MEMORY_LOG_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md"),

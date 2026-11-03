@@ -231,6 +231,45 @@ TradingAgents works with any market Yahoo Finance covers, using the exchange-suf
 - China A-shares: Shanghai `.SS`, Shenzhen `.SZ` (e.g. `600519.SS` for Kweichow Moutai)
 - Crypto: `BTC-USD`, `ETH-USD`
 
+### NSE breakout scanner (free, no API key)
+
+```bash
+tradingagents breakout --capital 500000 --risk 1
+```
+
+Scans every NSE mainboard stock (no penny stocks: price >= Rs 100, turnover >= Rs 10 crore a day)
+for 52-week-high breakouts out of tight bases. Each pick comes with an **entry** (a buy-stop for the
+next session), a **stoploss**, a **target** (2R), its **reward:risk**, a **holding period** (exit by a
+set date) and a **position size** for your capital and risk. It also shows the rule's own record over
+every NSE stock, after costs, and flags quarterly results that fall inside the holding window. When the
+Nifty 50 is below its 50-day average, it takes no new trades.
+
+How the rule was chosen and tested, with its caveats: [docs/breakout_research.md](docs/breakout_research.md).
+
+- **Free AI review**: inside Claude Code, run `/nse-breakout`. Claude runs the scan, reads each pick's
+  headlines and results date, and marks it TAKE / CAUTION / SKIP. It runs on your Claude subscription,
+  with no API key.
+- **Full multi-agent debate**: `tradingagents breakout --deep 2` runs the TradingAgents analysts,
+  researchers and risk team (Claude Fable 5.1) on the top 2 picks. This needs `ANTHROPIC_API_KEY` and
+  is billed per use.
+- `tradingagents headlines RELIANCE` prints a stock's news from Google News India (free).
+
+### Indian stock market (default)
+
+This fork is set up for NSE and BSE out of the box (`TRADINGAGENTS_MARKET=india`; set it to `us` for the upstream US defaults).
+
+- **Every NSE listing, bundled**: 3,563 securities (2,623 mainboard equities, 581 SME Emerge stocks, 359 ETFs) in `tradingagents/dataflows/data/india/nse_symbols.csv`, from NSE's own archives. Refresh with `python scripts/update_india_data.py`.
+- **Tickers as Indian traders type them**: `RELIANCE` → `RELIANCE.NS`, `NSE:TCS` → `TCS.NS`, `BSE:RELIANCE` or `RELIANCE.BO` (BSE), `M&M`, `BAJAJ-AUTO`. Indices: `NIFTY`, `BANKNIFTY`, `FINNIFTY`, `MIDCPNIFTY`, `SENSEX`, `INDIAVIX`, `NIFTYIT`, `NIFTYPHARMA` and other sector indices. Yahoo prices BSE by trading symbol, so a numeric scrip code like `500325` is refused with a pointer to `RELIANCE.BO`.
+- **IST trading hours**: "today" is the date in IST wherever the machine runs. The session clock covers the pre-open (09:00–09:15), the normal market (09:15–15:30), closing-price calculation (15:30–15:40) and the post-close session (15:40–16:00), plus the NSE holiday calendar. Today's daily candle counts as final once the session settles at about 16:00 IST. Before that, a run dated today reads the live price.
+- **India presets**: Nifty 50 (`^NSEI`) as the default alpha benchmark (`.BO` uses the Sensex). Macro news queries cover RBI, Sensex/Nifty, FII/DII flows and the rupee, SEBI, and the Union Budget. Fundamentals come from Yahoo (SEC EDGAR is US-only). Every agent is told the listing venue, INR pricing, IST sessions, T+1 settlement, and India-specific drivers such as circuit limits, promoter pledges and FII flows.
+
+```bash
+tradingagents --ticker RELIANCE --date 2026-11-03   # analyze an NSE stock
+tradingagents market-status                          # NSE/BSE session now, in IST, and upcoming holidays
+tradingagents symbols tata                           # search the NSE universe by symbol or name
+tradingagents backtest RELIANCE,TCS,HDFCBANK --start 2026-09-01 --end 2026-10-15
+```
+
 <p align="center">
   <img src="assets/cli/cli_init.png" width="100%" style="display: inline-block; margin: 0 2%;">
 </p>

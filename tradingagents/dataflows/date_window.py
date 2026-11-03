@@ -33,7 +33,17 @@ def in_window(pub_dt: datetime | None, start_dt: datetime, end_dt: datetime) -> 
 
 
 def get_current_date() -> str:
-    """Today's date, YYYY-MM-DD."""
+    """Today's date in the configured market, YYYY-MM-DD.
+
+    For the India market that is the date in IST, whatever the machine's own
+    time zone, so a run from abroad dates and guards its data as NSE/BSE do.
+    """
+    from tradingagents.dataflows.config import get_market
+
+    if get_market() == "india":
+        from tradingagents.dataflows.india import today_ist
+
+        return today_ist().strftime("%Y-%m-%d")
     return date.today().strftime("%Y-%m-%d")
 
 

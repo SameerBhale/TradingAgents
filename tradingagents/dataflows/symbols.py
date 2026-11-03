@@ -12,6 +12,10 @@ differ from the broker / TradingView / MT5 style symbols users often type:
     SPX500, US500     ^GSPC             index CFDs map to Yahoo index symbols
     09992.HK, 700.HK  9992.HK, 0700.HK  HK codes are zero-padded to 4 digits
     600519.SH         600519.SS         Yahoo spells Shanghai ``.SS``
+    NSE:TCS, TCS.NSE  TCS.NS            Yahoo spells NSE ``.NS``, BSE ``.BO``
+    NIFTY, SENSEX     ^NSEI, ^BSESN     Indian index names
+    RELIANCE          RELIANCE.NS       a bare NSE symbol, when the
+                                        configured market is India
 
 Passing the raw broker symbol to Yahoo returns an empty result, which the
 agents previously received as free text and could hallucinate a price
@@ -24,6 +28,8 @@ from __future__ import annotations
 
 import logging
 import re
+
+from tradingagents.dataflows import india
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +117,11 @@ def normalize_symbol(raw: str) -> str:
       4. HK rule: a numeric ``.HK`` code -> Yahoo's 4-digit padding
          (``09992.HK`` -> ``9992.HK``, ``700.HK`` -> ``0700.HK``).
       5. Shanghai rule: ``600519.SH`` -> ``600519.SS``.
-      6. Otherwise the upper-cased symbol is returned unchanged (plain
+      6. Indian rule: index names (``NIFTY``, ``SENSEX``), exchange-qualified
+         forms (``NSE:TCS``, ``BSE:500325``, ``TCS.NSE``) and, when the
+         configured market is India, a bare NSE symbol (``RELIANCE`` ->
+         ``RELIANCE.NS``).
+      7. Otherwise the upper-cased symbol is returned unchanged (plain
          equities, ETFs, Yahoo-native symbols like ``GC=F`` or ``^GSPC``).
 
     A trailing ``+`` (broker CFD marker, e.g. ``XAUUSD+``) is stripped before
@@ -136,6 +146,8 @@ def normalize_symbol(raw: str) -> str:
         canonical = f"{int(hk.group(1)):04d}.HK"
     elif sh := _SHANGHAI_SH.match(s):
         canonical = f"{sh.group(1)}.SS"
+    elif indian := india.resolve_india_symbol(s, bare_to_nse=_india_market()):
+        canonical = indian
     else:
         canonical = s
 
@@ -144,12 +156,20 @@ def normalize_symbol(raw: str) -> str:
     return canonical
 
 
+def _india_market() -> bool:
+    """Whether bare symbols resolve to Indian listings (``market: india``)."""
+    from tradingagents.dataflows.config import get_market
+
+    return get_market() == "india"
+
+
 # Tickers can contain letters, digits, dot, dash, underscore, caret
 # (index symbols like ^GSPC), equals (futures like GC=F), and plus
-# (forex/CFD symbols like XAUUSD+). None of these enable directory
+# (forex/CFD symbols like XAUUSD+), and ampersand (NSE symbols like M&M.NS,
+# J&KBANK.NS). None of these enable directory
 # traversal, so the value never escapes a containing directory when
 # interpolated into a path. Anything else is rejected.
-_TICKER_PATH_RE = re.compile(r"^[A-Za-z0-9._\-\^=+]+$")
+_TICKER_PATH_RE = re.compile(r"^[A-Za-z0-9._\-\^=+&]+$")
 
 
 def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
