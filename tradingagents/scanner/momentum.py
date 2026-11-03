@@ -35,6 +35,12 @@ KEEP_RANK = 40
 STOP_PCT = 15.0
 MIN_PRICE = 100.0
 HOLD_TEXT = "1-4 months (median ~2 months); sell only at a monthly review or on the stop"
+MODES = {
+    # regime off ->  fraction of the core kept in stocks; tested 2017-2026 after costs
+    "safe": {"invested_when_off": 0.0, "cagr_pct": 15.1, "max_drawdown_pct": 20.1},
+    "balanced": {"invested_when_off": 0.5, "cagr_pct": 14.3, "max_drawdown_pct": 20.7},
+    "aggressive": {"invested_when_off": 1.0, "cagr_pct": 13.2, "max_drawdown_pct": 32.4},
+}
 RECORD = {
     "period": "Jan 2017 - Oct 2026", "cagr_pct": 15.1, "max_drawdown_pct": 20.1, "worst_year_pct": -10.0,
     "nifty_cagr_pct": 11.3, "nifty_max_drawdown_pct": 38.4, "median_hold_days": 62,
@@ -71,6 +77,16 @@ def month_end(day: date) -> date:
     return d
 
 
+def _action(on: bool, invested: float, held: bool) -> str:
+    if on:
+        return "HOLD" if held else "BUY"
+    if invested == 0:
+        return "SELL (regime off)" if held else "WAIT"
+    if invested < 1:
+        return "HOLD (half)" if held else "BUY (half size)"
+    return "HOLD" if held else "BUY"
+
+
 def ranking(md: MarketData) -> pd.DataFrame:
     """Every eligible stock's risk-adjusted momentum as of the latest close, best first."""
     rows = []
@@ -100,8 +116,15 @@ def regime_on(md: MarketData) -> bool:
     return bool(c.iloc[-1] > c.iloc[-200:].mean())
 
 
-def core_picks(md: MarketData, core_capital: float, held: dict[str, float] | None = None) -> dict:
-    """The target portfolio now, with BUY/HOLD/SELL against ``held`` ({symbol: buy price})."""
+def core_picks(md: MarketData, core_capital: float, held: dict[str, float] | None = None,
+               mode: str = "balanced") -> dict:
+    """The target portfolio now, with BUY/HOLD/SELL against ``held`` ({symbol: buy price}).
+
+    ``mode`` sets what happens while the Nifty is below its 200-DMA: "safe" buys
+    nothing (WAIT), "balanced" buys at half size, "aggressive" at full size.
+    """
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {', '.join(MODES)}")
     held = held or {}
     rank = ranking(md)
     review = month_end(md.last)
@@ -112,7 +135,8 @@ def core_picks(md: MarketData, core_capital: float, held: dict[str, float] | Non
     keep = [s for s in held if ranks.get(s, 10**9) <= KEEP_RANK]
     fresh = [s for s in rank["symbol"] if s not in keep][: max(0, TOP_N - len(keep))]
     target = keep + fresh  # with the regime off this is the on-deck list, all WAIT
-    per_slot = core_capital / TOP_N
+    invested = 1.0 if on else MODES[mode]["invested_when_off"]
+    per_slot = core_capital / TOP_N * invested
     picks: list[CorePick] = []
     info = rank.set_index("symbol") if not rank.empty else pd.DataFrame()
     for sym in target:
@@ -125,7 +149,7 @@ def core_picks(md: MarketData, core_capital: float, held: dict[str, float] | Non
             rank=int(r["rank"]), symbol=sym, name=sec.name if sec else sym, cap=india.cap_class(sym),
             industry=india.industry(sym), close=round(float(r["close"]), 2), score=round(float(r["score"]), 2),
             ret_12_1_pct=round(float(r["ret"]) * 100, 1), vol_pct=round(float(r["vol"]) * 100, 1),
-            action=("HOLD" if buy else "BUY") if on else ("SELL (regime off)" if buy else "WAIT"), entry=entry,
+            action=_action(on, invested, bool(buy)), entry=entry,
             max_entry=round(float(r["close"]) * 1.01, 2) if not buy else entry,
             stop=round(entry * (1 - STOP_PCT / 100), 2), quantity=qty,
             capital_needed=round(qty * float(r["close"]), 0), hold=HOLD_TEXT, review_on=str(review),
@@ -133,11 +157,11 @@ def core_picks(md: MarketData, core_capital: float, held: dict[str, float] | Non
     picks.sort(key=lambda p: p.rank)
     sells = []
     for sym, buy in held.items():
-        if sym in target and on:
+        if sym in target and (on or invested > 0):
             continue
         last = md.stocks.get(sym)
         px = float(last["Close"].iloc[-1]) if last is not None else None
-        why = ("market regime OFF (Nifty below its 200-DMA): move to LIQUIDBEES" if not on
+        why = ("market regime OFF (Nifty below its 200-DMA), safe mode: move to LIQUIDBEES" if not on and invested == 0
                else f"rank {ranks.get(sym, 'unranked')} is outside the top {KEEP_RANK} or below its 200-DMA")
         sells.append({"symbol": sym, "buy_price": buy, "close": px, "reason": why})
     for p in picks:  # a held stock already through its stop
@@ -146,6 +170,8 @@ def core_picks(md: MarketData, core_capital: float, held: dict[str, float] | Non
     c = md.nifty["Close"]
     return {
         "regime_on": on,
+        "mode": mode, "invested_pct": round(invested * 100),
+        "modes": MODES,
         "nifty": round(float(c.iloc[-1]), 2), "nifty_sma200": round(float(c.iloc[-200:].mean()), 2),
         "review_on": str(review),
         "core_capital": core_capital,

@@ -1,9 +1,12 @@
-"""`tradingagents setups`: the survival plan's two lists as tables.
+"""`tradingagents setups`: the survival plan's lists as tables.
 
-1. CORE (default 80% of capital): the momentum portfolio, BUY / HOLD / SELL
-   against your journal's open momentum trades.
-2. SWING (default 20%): the top 10 swing setups (stocks and ETFs) with entry,
-   stoploss, target, exit date and holding time.
+1. CORE: the momentum portfolio, BUY / HOLD / SELL against your journal's open
+   momentum trades (mode safe / balanced / aggressive when the market is weak).
+2. SWING: the top 10 swing setups (stocks and ETFs), stop 5-10%, target 10-20%.
+3. VALUE: the best quality-growth-at-a-fair-price buys in a sound chart, with
+   concall headlines (not backtested).
+
+Every call is checked by the auditor and logged for `tradingagents calls review`.
 """
 
 from __future__ import annotations
@@ -11,15 +14,18 @@ from __future__ import annotations
 import json
 import os
 
-from rich import box
 from rich.markdown import Markdown
-from rich.table import Table
 
 from cli.breakout import _inr
 from cli.display import console
 from cli.scan import scans_dir
-from tradingagents.dataflows import india
 from tradingagents.journal import Journal
+
+MODE_TEXT = {
+    "safe": "safe: nothing bought while the Nifty is below its 200-DMA",
+    "balanced": "balanced: half size while the Nifty is below its 200-DMA",
+    "aggressive": "aggressive: full size always",
+}
 
 
 def _held_momentum() -> dict[str, float]:
@@ -28,27 +34,43 @@ def _held_momentum() -> dict[str, float]:
 
 
 def build(capital: float, core_pct: float, risk: float, top: int, refresh: bool, no_news: bool,
-          progress=None) -> dict:
+          mode: str = "balanced", value_top: int = 5, progress=None) -> dict:
+    from tradingagents import calls
     from tradingagents.scanner import data as data_mod
+    from tradingagents.scanner.audit import audit_core, audit_value
     from tradingagents.scanner.daily import run_daily
     from tradingagents.scanner.momentum import core_picks
+    from tradingagents.scanner.value import value_picks
 
     md = data_mod.load(refresh=refresh, progress=progress)
     core_cap = capital * core_pct / 100
     swing_cap = capital - core_cap
-    core = core_picks(md, core_cap, _held_momentum())
+    core = core_picks(md, core_cap, _held_momentum(), mode=mode)
+    for p in core["picks"]:
+        p["audit"] = audit_core(p, core["regime_on"], mode)
     swing = run_daily(capital=swing_cap, risk_pct=risk, top=top, with_news=not no_news, md=md)
-    return {
-        "as_of": str(md.last), "settled": str(md.settled), "capital": capital,
-        "core_pct": core_pct, "core_capital": core_cap, "swing_capital": swing_cap,
-        "core": core, "swing": swing,
-    }
+    value = value_picks(md, top=value_top, with_news=not no_news) if value_top else {"picks": []}
+    for v in value["picks"]:
+        v["audit"] = audit_value(v)
+    r = {"as_of": str(md.last), "settled": str(md.settled), "capital": capital, "core_pct": core_pct,
+         "core_capital": core_cap, "swing_capital": swing_cap, "mode": mode,
+         "core": core, "swing": swing, "value": value}
+    r["new_calls_logged"] = calls.record(r)
+    return r
+
+
+def _audit_cell(a: dict) -> str:
+    if not a:
+        return "-"
+    detail = "; ".join(a.get("wrong", []) + a.get("doubts", []))
+    return a["status"] + (f": {detail}" if detail else "")
 
 
 def render_markdown(r: dict) -> str:
-    core, swing = r["core"], r["swing"]
+    core, swing, value = r["core"], r["swing"], r.get("value", {"picks": []})
     m = swing["market"]
-    rec = core["record"]
+    mode = core.get("mode", r.get("mode", "balanced"))
+    mrec = core["modes"][mode]
     out = [
         f"# Trade setups - {r['as_of']} close",
         "",
@@ -57,119 +79,85 @@ def render_markdown(r: dict) -> str:
         f"({r['core_pct']:.0f}%), swing {_inr(r['swing_capital'])}",
         *[f"> {n}" for n in swing["notes"]],
         "",
-        f"## 1. CORE - momentum portfolio ({r['core_pct']:.0f}% of capital)",
+        f"## 1. CORE - momentum portfolio ({r['core_pct']:.0f}% of capital, mode {MODE_TEXT[mode]})",
         "",
-        f"Tested {rec['period']}: **+{rec['cagr_pct']}% a year, worst drop -{rec['max_drawdown_pct']}%** "
-        f"(Nifty: +{rec['nifty_cagr_pct']}%, -{rec['nifty_max_drawdown_pct']}%). Next review: "
-        f"**{core['review_on']}** (last trading day of the month).",
+        f"Tested 2017-2026 in {mode} mode: **+{mrec['cagr_pct']}% a year, worst drop -{mrec['max_drawdown_pct']}%** "
+        f"(Nifty: +{core['record']['nifty_cagr_pct']}%, -{core['record']['nifty_max_drawdown_pct']}%). "
+        f"Regime: **{'ON' if core['regime_on'] else 'OFF'}** (Nifty {core['nifty']:,} vs 200-DMA "
+        f"{core['nifty_sma200']:,}), {core['invested_pct']}% of the core invested. Next review: **{core['review_on']}**.",
         "",
+        "| # | Name | Ticker | Cap | Sector | Action | Entry | Stoploss | Target | Exit | Hold | Qty | Auditor |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
-    if not core["regime_on"]:
-        out += [f"**Market regime OFF**: the Nifty ({core['nifty']:,}) is below its 200-DMA "
-                f"({core['nifty_sma200']:,}). Keep the core in LIQUIDBEES. The list below is ON DECK (WAIT): "
-                f"what the core buys at the first month-end review with the Nifty back above its 200-DMA.", ""]
-    if True:
-        out += ["| # | Name | Ticker | Cap | Sector | Action | Entry | Stoploss | Target | Exit | Hold | Qty |",
-                "|---|---|---|---|---|---|---|---|---|---|---|---|"]
-        for p in core["picks"]:
-            entry = (f"buy next open <= {p['max_entry']:,.2f}" if p["action"] == "BUY"
-                     else f"~{p['close']:,.2f} when regime turns on" if p["action"] == "WAIT"
-                     else f"bought {p['entry']:,.2f}")
-            out.append(
-                f"| {p['rank']} | {p['name']} | {p['symbol'].removesuffix('.NS')} | {p['cap']} | "
-                f"{p['industry'] or '-'} | **{p['action']}** | {entry} | {p['stop']:,.2f} (-15%) | none: ride the trend | "
-                f"monthly review {p['review_on']}: sell if rank > 40 | 1-4 months | {p['quantity']} |"
-            )
+    for p in core["picks"]:
+        entry = (f"bought {p['entry']:,.2f}" if p["action"].startswith(("HOLD", "SELL"))
+                 else f"next open <= {p['max_entry']:,.2f}" if p["action"].startswith("BUY")
+                 else f"~{p['close']:,.2f}")
+        out.append(
+            f"| {p['rank']} | {p['name']} | {p['symbol'].removesuffix('.NS')} | {p['cap']} | {p['industry'] or '-'} | "
+            f"**{p['action']}** | {entry} | {p['stop']:,.2f} (-15%) | none: ride the trend | review "
+            f"{p['review_on']}; sell if rank > 40 | 1-4 months | {p['quantity']} | {_audit_cell(p.get('audit', {}))} |"
+        )
     if core["sells"]:
         out += ["", "**SELL** (from your journal):"]
         out += [f"- {s['symbol'].removesuffix('.NS')}: {s['reason']}" for s in core["sells"]]
     out += [
         "",
-        f"## 2. SWING - top {len(swing['ideas'])} setups ({100 - r['core_pct']:.0f}% of capital)",
+        f"## 2. SWING - top {len(swing['ideas'])} setups ({100 - r['core_pct']:.0f}% of capital; stop 5-10%, target 10-20%)",
         "",
-        "| # | Name | Ticker | Cap | Setup | Grade | Entry | Stoploss | Target | Exit by | Hold | R:R | Qty | Call |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| # | Name | Ticker | Cap | Setup | Grade (meaning) | Entry | Stoploss | Target | Exit by | Hold | R:R | Qty | Call | Auditor |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i in swing["ideas"]:
         entry = (f"buy-stop {i['entry']:,.2f} (max {i['max_entry']:,.2f})" if i["entry_type"] == "stop"
                  else f"buy open ~{i['entry']:,.2f}")
         out.append(
             f"| {i['rank']} | {i['name']} | {i['symbol'].removesuffix('.NS')} | {i['cap']} | {i['strategy_label']} | "
-            f"{i['grade']} | {entry} | {i['stop']:,.2f} (-{i['risk_pct']:.1f}%) | {i['target']:,.2f} "
-            f"(+{i['reward_pct']:.1f}%) | {i['exit_by']} | {i['hold']} | {i['rr']:.1f} | {i['quantity']} | {i['verdict']} |"
+            f"{i['grade_meaning']} | {entry} | {i['stop']:,.2f} (-{i['risk_pct']:.1f}%) | {i['target']:,.2f} "
+            f"(+{i['reward_pct']:.1f}%) | {i['exit_by']} | {i['hold']} | {i['rr']:.1f} | {i['quantity']} | "
+            f"{i['verdict']} | {_audit_cell(i.get('audit', {}))} |"
         )
+    if not swing["ideas"]:
+        out.append("| - | No setup inside the 5-10% stop / 10-20% target bands today | | | | | | | | | | | | | |")
+    out += ["", "## 3. VALUE - best value buys (quality + growth at a fair price, sound chart; not backtested)", ""]
+    if value["picks"]:
+        out += ["| # | Name | Ticker | Cap | Sector | P/E (sector) | ROE | D/E | Sales gr. | Profit gr. | Chart | Entry | Stoploss | Target | Hold | Auditor |",
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for v in value["picks"]:
+            out.append(
+                f"| {v['rank']} | {v['name']} | {v['symbol'].removesuffix('.NS')} | {v['cap']} | {v['sector']} | "
+                f"{v['pe']} ({v['sector_pe']}) | {v['roe_pct']}% | {v['debt_equity']}% | {v['revenue_growth_pct']}% | "
+                f"{v['earnings_growth_pct']}% | {v['pattern']} | <= {v['max_entry']:,.2f} | {v['stop']:,.2f} "
+                f"(-{v['risk_pct']:.1f}%) | {v['target']:,.2f} (+{v['reward_pct']:.1f}%) | {v['hold']} | "
+                f"{_audit_cell(v.get('audit', {}))} |"
+            )
+        for v in value["picks"]:
+            if v["concall"]:
+                out.append(f"\n**{v['symbol'].removesuffix('.NS')} concall / management headlines:** " +
+                           " | ".join(f"{n['when']}: {n['title']}" for n in v["concall"][:3]))
+    else:
+        out.append(value.get("note", "No value pick today."))
     out += [
         "",
-        "Grades: **A** 52-week breakout (tested edge in rising and weak markets); **B** setup whose strategy is "
-        "profitable across NSE over the last 6 and 12 months; **C** strategy losing lately: half size or paper only.",
+        "Grades: **A** 52-week breakout, tested edge in rising and weak markets (full size); **B** strategy "
+        "profitable across NSE over the last 6 and 12 months (full size); **C** strategy losing lately (half "
+        "size or paper). Auditor: **CORRECT** no rule broken; **QUESTIONABLE** check the noted risk; "
+        "**WRONG** breaks a rule: do not take it.",
         "",
-        "Order: core BUYs at the next open (limit = the max shown). Swing: SL buy order (trigger = entry, "
-        "limit = max) for the next session, then a GTT OCO with the stoploss and target. Log every fill: "
-        "`/trade-journal`. Rules: docs/STRATEGY.md. Not investment advice.",
+        "To invest: tell me the amount and the list (e.g. \"Rs 1,00,000 for swing\"), or run "
+        "`tradingagents allocate --amount 100000 --for swing`. Log fills with `/trade-journal`. "
+        "Rules: docs/STRATEGY.md. Not investment advice.",
     ]
     return "\n".join(out)
 
 
-def _print(r: dict) -> None:
-    core, swing = r["core"], r["swing"]
-    console.print(f"[bold]Trade setups from the {r['as_of']} close[/bold]  |  {india.market_status().describe()}")
-    for n in swing["notes"]:
-        console.print(f"[yellow]Note:[/yellow] {n}")
-    wide = console.width >= 130
-    console.print(f"\n[bold cyan]1. CORE - momentum portfolio[/bold cyan] ({_inr(r['core_capital'])}, "
-                  f"review {core['review_on']}; tested +{core['record']['cagr_pct']}%/yr, worst drop "
-                  f"-{core['record']['max_drawdown_pct']}%)")
-    if not core["regime_on"]:
-        console.print("[red]Regime OFF: Nifty below its 200-DMA. Core stays in LIQUIDBEES. The list is ON DECK "
-                      "(WAIT): bought at the first month-end review with the Nifty back above.[/red]")
-    if wide:
-        t = Table(box=box.SIMPLE_HEAD)
-        for c in ("#", "Name", "Ticker", "Cap", "Action", "Entry", "Stoploss", "Target", "Exit", "Hold", "Qty"):
-            t.add_column(c, no_wrap=c not in ("Name",))
-        for p in core["picks"]:
-            t.add_row(str(p["rank"]), p["name"][:28], p["symbol"].removesuffix(".NS"), p["cap"], p["action"],
-                      f"{p['max_entry'] if p['action'] == 'BUY' else p['entry']:,.2f}", f"{p['stop']:,.2f}",
-                      "none (trend)", f"review {p['review_on'][5:]}", "1-4 mo", str(p["quantity"]))
-        console.print(t)
-    else:
-        for p in core["picks"]:
-            console.print(f"{p['rank']:>2} [bold]{p['symbol'].removesuffix('.NS')}[/bold] {p['name'][:30]} "
-                          f"({p['cap']}) [bold]{p['action']}[/bold]")
-            console.print(f"    Entry {p['max_entry'] if p['action'] == 'BUY' else p['entry']:,.2f} | Stop "
-                          f"{p['stop']:,.2f} | Target: none | Exit: review {p['review_on'][5:]} | Hold 1-4 mo | "
-                          f"Qty {p['quantity']}")
-    for s in core["sells"]:
-        console.print(f"[red]SELL {s['symbol'].removesuffix('.NS')}[/red]: {s['reason']}")
-
-    console.print(f"\n[bold cyan]2. SWING - top {len(swing['ideas'])} setups[/bold cyan] ({_inr(r['swing_capital'])})")
-    if wide:
-        t = Table(box=box.SIMPLE_HEAD)
-        for c in ("#", "Name", "Ticker", "Cap", "Setup", "Gr", "Entry", "Stoploss", "Target", "Exit by", "Hold",
-                  "R:R", "Qty", "Call"):
-            t.add_column(c, no_wrap=c not in ("Name", "Hold"))
-        for i in swing["ideas"]:
-            t.add_row(str(i["rank"]), i["name"][:24], i["symbol"].removesuffix(".NS"), i["cap"], i["strategy"],
-                      i["grade"], f"{i['entry']:,.2f}", f"{i['stop']:,.2f}", f"{i['target']:,.2f}", i["exit_by"][5:],
-                      i["hold"], f"{i['rr']:.1f}", str(i["quantity"]), i["verdict"].split(" (")[0].split(":")[0])
-        console.print(t)
-    else:
-        for i in swing["ideas"]:
-            console.print(f"{i['rank']:>2}{i['grade']} [bold]{i['symbol'].removesuffix('.NS')}[/bold] {i['name'][:26]} "
-                          f"({i['cap']}, {i['strategy']}) -> {i['verdict'].split(' (')[0]}")
-            console.print(f"    Entry {i['entry']:,.2f} | Stop {i['stop']:,.2f} | Tgt {i['target']:,.2f} | "
-                          f"R:R {i['rr']:.1f} | Exit by {i['exit_by'][5:]} | Qty {i['quantity']}")
-            console.print(f"    Hold: {i['hold']}")
-    console.print("[dim]Grades: A breakout (tested edge), B strategy working lately, C half size/paper. "
-                  "Rules: docs/STRATEGY.md. Not investment advice.[/dim]")
-
-
 def setups_command(capital: float, core_pct: float, risk: float, top: int, refresh: bool, as_json: bool,
-                   markdown: bool, no_news: bool) -> int:
+                   markdown: bool, no_news: bool, mode: str = "balanced", value_top: int = 5) -> int:
     def progress(done, total):
         if not (as_json or markdown):
             console.print(f"[dim]Downloading daily bars {done}/{total}...[/dim]")
 
-    r = build(capital, core_pct, risk, top, refresh, no_news, progress)
+    r = build(capital, core_pct, risk, top, refresh, no_news, mode, value_top, progress)
     stem = os.path.join(scans_dir(), f"setups-{r['as_of']}")
     md_text = render_markdown(r)
     with open(stem + ".json", "w", encoding="utf-8") as fh:
@@ -181,10 +169,55 @@ def setups_command(capital: float, core_pct: float, risk: float, top: int, refre
     elif markdown:
         print(md_text)
     else:
-        _print(r)
+        console.print(Markdown(md_text))
         console.print(f"[dim]Saved: {stem}.md[/dim]")
     return 0
 
 
-def show_markdown(text: str) -> None:
-    console.print(Markdown(text))
+def latest() -> dict:
+    import glob
+
+    files = sorted(glob.glob(os.path.join(scans_dir(), "setups-*.json")))
+    if not files:
+        raise ValueError("no saved setups yet: run /trade-setups (tradingagents setups) first")
+    with open(files[-1], encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def allocate(amount: float, kind: str, picks: list[int] | None, risk: float) -> dict:
+    """Size the latest list for ``amount`` of money: swing by risk, core and value equally."""
+    import math
+
+    r = latest()
+    rows = []
+    if kind == "swing":
+        ideas = [i for i in r["swing"]["ideas"] if not picks or i["rank"] in picks]
+        ideas = [i for i in ideas if i.get("audit", {}).get("status") != "WRONG"]
+        for i in ideas:
+            per = i["entry"] - i["stop"]
+            factor = 0.5 if i["grade"] == "C" else 1.0
+            qty = min(math.floor(amount * risk / 100 * factor / per), math.floor(amount * 0.25 / i["entry"]))
+            rows.append({"rank": i["rank"], "symbol": i["symbol"], "grade": i["grade"], "entry": i["entry"],
+                         "stop": i["stop"], "target": i["target"], "qty": qty, "capital": round(qty * i["entry"]),
+                         "max_loss": round(qty * per), "exit_by": i["exit_by"]})
+    elif kind == "core":
+        items = [p for p in r["core"]["picks"] if not picks or p["rank"] in picks]
+        frac = r["core"].get("invested_pct", 100) / 100 or 0.5
+        for p in items:
+            px = p["max_entry"] if p["action"].startswith("BUY") else p["close"]
+            qty = math.floor(amount / max(len(items), 1) * frac / px)
+            rows.append({"rank": p["rank"], "symbol": p["symbol"], "grade": "core", "entry": px, "stop": round(px * 0.85, 2),
+                         "target": None, "qty": qty, "capital": round(qty * px), "max_loss": round(qty * px * 0.15),
+                         "exit_by": f"review {p['review_on']}"})
+    elif kind == "value":
+        items = [v for v in r["value"]["picks"] if not picks or v["rank"] in picks]
+        for v in items:
+            qty = math.floor(amount / max(len(items), 1) / v["max_entry"])
+            rows.append({"rank": v["rank"], "symbol": v["symbol"], "grade": "value", "entry": v["max_entry"],
+                         "stop": v["stop"], "target": v["target"], "qty": qty, "capital": round(qty * v["max_entry"]),
+                         "max_loss": round(qty * (v["max_entry"] - v["stop"])), "exit_by": v["hold"]})
+    else:
+        raise ValueError("--for must be swing, core or value")
+    used = sum(x["capital"] for x in rows)
+    return {"as_of": r["as_of"], "amount": amount, "for": kind, "rows": rows, "capital_used": used,
+            "cash_left": round(amount - used), "max_total_loss": sum(x["max_loss"] for x in rows)}

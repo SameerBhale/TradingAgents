@@ -21,6 +21,7 @@ from tradingagents.dataflows.config import get_config
 logger = logging.getLogger(__name__)
 
 _CHUNK = 150
+STALE_TTL_SECONDS = 1800  # a lagging download is reused for 30 minutes
 
 
 def _cache_path(symbols: list[str], period: str, stamp: str) -> str:
@@ -92,6 +93,7 @@ def download_daily(
 
     symbols = sorted(set(symbols))
     path = _cache_path(symbols, period, stamp) if stamp else None
+    stale_path = path + ".stale" if path else None
     if path and not refresh and os.path.exists(path):
         try:
             cached = pd.read_pickle(path)
@@ -99,6 +101,12 @@ def download_daily(
                 return cached
         except Exception:  # a torn cache file is a miss
             logger.warning("bulk cache %s unreadable; refetching", path)
+    # Yahoo lagging: reuse a short-lived copy instead of refetching every symbol on every run.
+    if stale_path and not refresh and os.path.exists(stale_path)             and time.time() - os.path.getmtime(stale_path) < STALE_TTL_SECONDS:
+        try:
+            return pd.read_pickle(stale_path)
+        except Exception:
+            pass
 
     data: dict[str, pd.DataFrame] = {}
     for i in range(0, len(symbols), _CHUNK):
@@ -114,8 +122,11 @@ def download_daily(
         data.update(_split(frame, chunk))
         if progress:
             progress(min(i + _CHUNK, len(symbols)), len(symbols))
-    if path and data and reaches(data):
-        pd.to_pickle(data, path)
+    if path and data:
+        if reaches(data):
+            pd.to_pickle(data, path)
+        else:
+            pd.to_pickle(data, stale_path)
     return data
 
 
@@ -129,3 +140,49 @@ def next_earnings_date(symbol: str):
         return None
     dates = cal.get("Earnings Date") if isinstance(cal, dict) else None
     return min(dates) if dates else None
+
+
+FUNDAMENTAL_FIELDS = (
+    "trailingPE", "forwardPE", "priceToBook", "returnOnEquity", "returnOnAssets", "debtToEquity",
+    "revenueGrowth", "earningsGrowth", "profitMargins", "operatingMargins", "marketCap",
+    "dividendYield", "freeCashflow", "currentRatio", "recommendationMean", "recommendationKey",
+    "targetMeanPrice", "numberOfAnalystOpinions", "heldPercentInsiders", "sector", "industry",
+)
+
+
+def fundamentals_snapshot(symbols: list[str], stamp: str, workers: int = 8) -> dict[str, dict]:
+    """Today's Yahoo fundamentals for ``symbols`` (a present-day snapshot, not point-in-time).
+
+    Cached per ``stamp`` (a date), so a second run the same day makes no requests.
+    """
+    import concurrent.futures as cf
+    import json
+
+    folder = os.path.join(get_config()["data_cache_dir"], "bulk")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"fundamentals-{stamp}.json")
+    cache: dict[str, dict] = {}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                cache = json.load(fh)
+        except (OSError, ValueError):
+            cache = {}
+    missing = [s for s in symbols if s not in cache]
+
+    def one(sym):
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*inplace keyword.*")
+                info = yf.Ticker(sym).info or {}
+        except Exception:  # unavailable: an empty record, retried tomorrow
+            return sym, {}
+        return sym, {k: info.get(k) for k in FUNDAMENTAL_FIELDS if info.get(k) is not None}
+
+    if missing:
+        with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+            for sym, rec in pool.map(one, missing):
+                cache[sym] = rec
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(cache, fh, default=str)
+    return {s: cache.get(s, {}) for s in symbols}

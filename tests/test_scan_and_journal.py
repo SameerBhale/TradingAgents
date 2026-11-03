@@ -170,10 +170,18 @@ def test_momentum_core_holds_and_sells_against_the_journal():
 def test_momentum_regime_off_waits():
     from tradingagents.scanner import momentum as M
 
-    r = M.core_picks(_momentum_md(regime_up=False), 400_000, {"S29.NS": 100.0})
+    md = _momentum_md(regime_up=False)
+    r = M.core_picks(md, 400_000, {"S29.NS": 100.0}, mode="safe")
     assert not r["regime_on"]
     assert all(p["action"] in ("WAIT", "SELL (regime off)") for p in r["picks"])
     assert any(s["symbol"] == "S29.NS" for s in r["sells"])
+    half = M.core_picks(md, 400_000, mode="balanced")
+    full = M.core_picks(md, 400_000, mode="aggressive")
+    assert all(p["action"] == "BUY (half size)" for p in half["picks"])
+    assert all(p["action"] == "BUY" for p in full["picks"])
+    assert sum(p["capital_needed"] for p in half["picks"]) <= 200_000 + 20
+    with pytest.raises(ValueError):
+        M.core_picks(md, 400_000, mode="yolo")
 
 
 def test_portfolio_replay_respects_slots_and_cash():

@@ -33,9 +33,14 @@ but the account barely grew over 10 years, so they are only the satellite.
    run `/trade-setups`. Buy the new names at the next open.
 5. **Keep a winner**: a holding stays while its rank is within the top 40. Sell it only
    when it falls out of the top 40, or below its 200-DMA, at a review.
-6. **Market switch**: when the Nifty 50 closes a month below its 200-day average, sell
-   the whole core and park it in a liquid ETF (LIQUIDBEES). Buy back at the first month-end
-   with the Nifty above its 200-DMA.
+6. **Market switch**: when the Nifty 50 closes a month below its 200-day average, the
+   core changes size by mode. Choose with `--mode`:
+
+   | Mode | Core while the Nifty is below its 200-DMA | Return a year | Worst drop |
+   |---|---|---|---|
+   | safe | 0% in stocks, all in LIQUIDBEES | +15.1% | -20.1% |
+   | **balanced (default)** | 50% in stocks, 50% in LIQUIDBEES | +14.3% | -20.7% |
+   | aggressive | 100% in stocks | +13.2% | -32.4% |
 7. **Stoploss: -15%** from your buy price, on a closing basis. After a stop, that slot
    waits in LIQUIDBEES until the next review.
 8. **No target.** Momentum makes its money from the few stocks that run for months.
@@ -46,7 +51,10 @@ but the account barely grew over 10 years, so they are only the satellite.
 
 ## B. The swing satellite (20% of capital)
 
-11. Only **grade A** (52-week breakout) setups at full size. Trade grade B at full size
+11. **Stoploss 5-10%, target 10-20%** (2x the risk). Tested 2017-2026: breakouts kept their
+    edge in this band (+0.53%, +0.71% and +0.04% per trade across the three periods).
+    Setups outside the band are dropped.
+11a. Only **grade A** (52-week breakout) setups at full size. Trade grade B at full size
     only while it is marked B. Grade C: paper-trade it, or use half size if you must.
 12. **Risk 1% of the swing capital per trade** (the quantity shown already does this),
     with at most 25% of the swing capital in one stock.
@@ -59,6 +67,17 @@ but the account barely grew over 10 years, so they are only the satellite.
     about 8. Pullbacks last about 9 sessions; RSI(2) dips 2 to 4 sessions.
 16. Results date inside the hold: skip the trade, halve the size, or sell before the results.
 
+## B2. Value buys (part of the swing money, or your long-term money)
+
+16a. Screen: the 250 most traded stocks above their 200-DMA (or within 15% of the 52-week
+     high), with ROE >= 15%, debt/equity <= 100%, operating margin >= 10%, revenue and
+     earnings growing, P/E at or below the sector median, and PEG <= 1.5.
+16b. Read the concall headlines. A profit jump over 100% is often a one-off: the auditor
+     flags it.
+16c. Stop 5-10%, target 10-20%, and review on every quarterly result. **Not backtested**:
+     free fundamentals have no history. Size it like a grade-C idea until the calls review
+     shows it works.
+
 ## C. Survival rules (the account as a whole)
 
 17. **Start only with money you can watch fall 20-25%** without selling in panic. The
@@ -69,6 +88,7 @@ but the account barely grew over 10 years, so they are only the satellite.
 19. **At -30% from the peak** (worse than anything tested), stop everything and review.
     Something has changed.
 20. **Idle cash goes to LIQUIDBEES** (about 6-7% a year), never into a savings account.
+20a. **Never take a call the auditor marks WRONG.**
 21. **Log every fill** in `/trade-journal` the same day, then check `journal stats` monthly
     against these numbers. A big gap from the backtest means you are not following the rules.
 22. **Taxes**: the core holds about 2 months, so most gains are short-term (STCG 20%). Gains
@@ -79,11 +99,22 @@ but the account barely grew over 10 years, so they are only the satellite.
 
 | When | What |
 |---|---|
-| Every trading day after 16:30 IST | `/trade-setups`: new swing setups and core stop checks |
+| Every trading day after 16:30 IST | `/trade-setups`: new swing setups, value buys, core stop checks |
+| When you decide to invest | tell `/trade-setups` the amount and list, e.g. "Rs 1,00,000 for swing" |
 | Before 09:15 IST next morning | place the SL buy orders for swing setups; core BUYs at the open |
 | Last trading day of the month, after 16:30 | core review: BUY / HOLD / SELL from `/trade-setups` |
 | After every fill | `/trade-journal`: log it |
-| Monthly | `tradingagents journal stats`: are you on plan? |
+| Monthly | `tradingagents journal stats` and `tradingagents calls review`: are you, and the bot, on plan? |
+
+## E. Getting better: the feedback loop
+
+23. Every `/trade-setups` run logs its calls. `tradingagents calls review` replays them on
+    the prices that followed, and shows the hit rate by grade, strategy, verdict and auditor
+    status.
+24. Tell the bot when a call was good or bad: `tradingagents calls feedback <ticker> "<why>"
+    --good/--bad`.
+25. Change a rule only when a group has 20 or more closed calls that disagree with the
+    backtest, and re-test the change on the 10-year data before adopting it.
 
 ## Honest limits
 

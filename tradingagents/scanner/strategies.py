@@ -135,8 +135,32 @@ def signals(name: str, ind: pd.DataFrame, market: pd.DataFrame | None) -> pd.Ser
     raise ValueError(f"unknown strategy {name!r}")
 
 
+# Swing stop band (percent below the entry). None leaves each strategy's own stop.
+# 5-10% (targets 2R = 10-20%): tested 2017-2026 on a point-in-time universe, breakouts
+# kept their edge (+0.53% / +0.71% / +0.04% per trade by period vs +0.53 / +0.48 / +0.11%).
+STOP_MIN_PCT: float | None = 5.0
+STOP_MAX_PCT: float | None = 10.0
+TARGET_R = 2.0
+
+
 def setup_for(name: str, row: pd.Series) -> Setup | None:
-    """The trade plan for a signal bar of strategy ``name``."""
+    """The trade plan for a signal bar of strategy ``name``, inside the stop band."""
+    s = _raw_setup(name, row)
+    if s is None or (STOP_MIN_PCT is None and STOP_MAX_PCT is None):
+        return s
+    stop = s.stop
+    if STOP_MIN_PCT is not None:
+        stop = min(stop, s.entry * (1 - STOP_MIN_PCT / 100))
+    if STOP_MAX_PCT is not None:
+        stop = max(stop, s.entry * (1 - STOP_MAX_PCT / 100))
+    stop = round(stop, 2)
+    target = s.target
+    if not s.exit_sma5:
+        target = round(s.entry + TARGET_R * (s.entry - stop), 2)
+    return Setup(s.strategy, s.entry_type, s.entry, stop, target, s.exit_rule, s.max_hold, s.exit_sma5)
+
+
+def _raw_setup(name: str, row: pd.Series) -> Setup | None:
     if name == "breakout":
         p = E.plan_for(row, BREAKOUT_RULES)
         if p is None:

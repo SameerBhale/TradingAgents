@@ -38,6 +38,12 @@ from tradingagents.scanner import engine as E, strategies as S
 NIFTY = "^NSEI"
 ALLOWED_CAPS = ("Large", "Mid", "Small")
 GRADE_ORDER = {"A": 0, "B": 1, "C": 2}
+GRADE_MEANING = {
+    "A": "A: 52-week breakout, tested edge in rising and weak markets; full size",
+    "B": "B: strategy profitable across NSE over the last 6 and 12 months; full size",
+    "C": "C: strategy losing money lately; half size or paper trade",
+}
+SWING_TARGET_BAND = (10.0, 20.0)
 
 # Whole-word / phrase matches in headlines (case-insensitive). Crude by design:
 # a flag says "read these headlines", it is not a sentiment model.
@@ -89,6 +95,8 @@ class Idea:
     earnings_date: str | None
     earnings_in_window: bool
     hold: str = ""
+    grade_meaning: str = ""
+    audit: dict = field(default_factory=dict)
     news: list[dict] = field(default_factory=list)
     news_flag: str = "none found"
     bull: list[str] = field(default_factory=list)
@@ -288,6 +296,8 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
             target = s.target if s.target is not None else s.entry
             reward = target - s.entry
             rr = reward / (s.entry - s.stop) if reward > 0 else 0.0
+            if not SWING_TARGET_BAND[0] - 0.05 <= reward / s.entry * 100 <= SWING_TARGET_BAND[1] + 0.05:
+                continue  # outside the 10-20% target band (e.g. RSI(2) snap-backs)
             qty = _size(capital, risk_pct, s.entry, s.stop, factor)
             sec = universe[sym]
             is_etf = sym in md.etfs
@@ -305,7 +315,7 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
                 max_loss=round(qty * (s.entry - s.stop), 0),
                 size_note="half size (strategy not working lately)" if factor < 1 else "full size",
                 earnings_date=None, earnings_in_window=False,
-                hold=hold_text(name, records[name], s.max_hold),
+                hold=hold_text(name, records[name], s.max_hold), grade_meaning=GRADE_MEANING[grade],
             )
             six = records[name].get("6m", {})
             idea.score = (
@@ -360,14 +370,19 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
     if not any(i.grade == "A" for i in ideas):
         notes.append("No grade-A breakout today. Grade B/C ideas are weaker: their strategies lost money "
                      "in the weak 2024-26 market. Prefer half size or paper trades.")
+    market_state = {
+        "nifty": round(float(mrow["nifty"]), 2), "nifty_sma50": round(float(mrow["nifty_sma50"]), 2),
+        "nifty_sma200": round(float(mrow["nifty_sma200"]), 2),
+        "nifty_ret_6m_pct": round(float(mrow["nifty_ret126"]) * 100, 1),
+        "breadth_pct": round(float(mrow["breadth"]), 1), "filter_on": regime,
+    }
+    from tradingagents.scanner.audit import audit_swing
+
+    for i in ideas:
+        i.audit = audit_swing(asdict(i), market_state)
     return json.loads(json.dumps({
         "as_of": str(day.date()),
-        "market": {
-            "nifty": round(float(mrow["nifty"]), 2), "nifty_sma50": round(float(mrow["nifty_sma50"]), 2),
-            "nifty_sma200": round(float(mrow["nifty_sma200"]), 2),
-            "nifty_ret_6m_pct": round(float(mrow["nifty_ret126"]) * 100, 1),
-            "breadth_pct": round(float(mrow["breadth"]), 1), "filter_on": regime,
-        },
+        "market": market_state,
         "ideas": [asdict(i) for i in ideas],
         "candidates": len(best),
         "scanned": len(md.stocks),

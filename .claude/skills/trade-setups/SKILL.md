@@ -1,72 +1,112 @@
 ---
 name: trade-setups
 description: >-
-  The survival plan's trade list for NSE: the momentum core portfolio (BUY / HOLD
-  / SELL / WAIT) plus the top 10 swing setups across large, mid and small caps
-  and ETFs. Shows a table with name, ticker, cap (Large/Mid/Small/ETF), setup,
-  grade, entry, stoploss, target, exit date, holding time, R:R and quantity,
-  then a bull-vs-bear debate on the best swing ideas. Also answers "how long
-  should I hold X". Free data, no API key. Use when the user types
-  /trade-setups or /trade-setup, or asks for "setups", "what to buy",
-  "top stocks", "monthly review", "how long to hold".
-argument-hint: "[--capital 500000] [--core 80] [--risk 1]"
+  The survival plan's trade list for NSE: the momentum core portfolio, the top 10
+  swing setups (large, mid and small caps and ETFs; stop 5-10%, target 10-20%),
+  and the best value buys (fundamentals plus chart plus concall headlines). Every
+  row has name, ticker, cap, grade with its meaning, entry, stoploss, target, exit,
+  holding time, quantity and an auditor's check. Then a Bull / Bear / Judge debate
+  and an Auditor agent who says whether each call is correct. It sizes positions
+  when the user gives an amount, and records feedback. Free data, no API key. Use
+  for /trade-setups, /trade-setup, "setups", "what to buy", "value buy",
+  "how long to hold", "invest Rs X in swing".
+argument-hint: "[--capital 500000] [--core 80] [--risk 1] [--mode balanced]"
 ---
 
 # trade-setups
 
-The scanner owns every number. You present them, debate the swing ideas, and
+The scanner owns every number. You present them, debate them, audit them and
 answer questions. Never invent or change a price, level, quantity or holding time.
 
-## Steps
+## 1. Run
 
-1. Run (pass the user's arguments; defaults: capital 500000, core 80, risk 1):
+```bash
+tradingagents setups --capital 500000 --core 80 --risk 1 --mode balanced --markdown
+```
 
-   ```bash
-   tradingagents setups --capital 500000 --core 80 --risk 1 --markdown
-   ```
+Pass the user's arguments. `--mode` sets how the core behaves while the Nifty is below
+its 200-DMA: `balanced` (default, half size), `safe` (wait in LIQUIDBEES) or
+`aggressive` (full size). Use `python -m cli.main setups ...` if `tradingagents` is not
+on PATH. The command saves `~/.tradingagents/scans/setups-<date>.json` and logs every
+call for later review.
 
-   (Use `python -m cli.main setups ...` from the repo root if `tradingagents` is not on
-   PATH.) It prints two Markdown tables and saves
-   `~/.tradingagents/scans/setups-<date>.md` and `.json`.
+## 2. Show
 
-2. Show the output's header and notes first (Yahoo lagging, regime OFF), then **both
-   tables exactly as printed**: 1. CORE, 2. SWING. Keep every column: Name, Ticker,
-   Cap, Setup, Grade, Entry, Stoploss, Target, Exit by, Hold, R:R, Qty, Call.
+The header and notes first (Yahoo lagging, regime). Then all three tables exactly as
+printed: 1. CORE, 2. SWING, 3. VALUE. Every grade cell carries its meaning; keep it.
+- **A**: 52-week breakout, the tested edge in rising and weak markets; full size.
+- **B**: the strategy is profitable across NSE over the last 6 and 12 months; full size.
+- **C**: the strategy is losing money lately; half size or paper trade.
 
-3. **Debate** the top 3 swing ideas (read `~/.tradingagents/scans/setups-<date>.json`,
-   `swing.ideas[].bull`, `bear`, `news`, `earnings_date`). For each one, give a
-   **Bull** (2 points), a **Bear** (2 points, answering the Bull) and a **Judge** (TAKE /
-   CAUTION / HALF / SKIP). The Judge can be stricter than the scanner, never looser.
+Auditor statuses: **CORRECT** (no rule broken), **QUESTIONABLE** (check the noted
+risk), **WRONG** (breaks a rule: do not take it).
 
-4. Close with what to do now, numbered:
-   1. Core: if the regime is ON and today is review day (`core.review_on`), BUY or
-      SELL as listed at the next open. Otherwise hold, and check stops only.
-      If the regime is OFF: the core stays in LIQUIDBEES; the list is on deck.
-   2. Swing: place SL buy orders (trigger = entry, limit = max) before 09:15 IST, then
-      a GTT OCO with the stop and the target after the fill.
-   3. Log fills with `/trade-journal`.
+## 3. Debate, then audit
 
-## Holding-time questions ("how long should I hold X?")
+For the top 3 swing ideas and the top 2 value buys, read the JSON (`swing.ideas[]`:
+`bull`, `bear`, `news`, `earnings_date`, `audit`; `value.picks[]`: fundamentals,
+`concall`, `why`, `risks`, `audit`):
 
-Answer from the data, never from a guess:
+- **Bull** (2 points) and **Bear** (2 points, answering the Bull's best one).
+- **Judge**: TAKE / CAUTION / HALF / SKIP. It can be stricter than the scanner, never looser.
+- **Auditor agent**: a separate check of the call itself. Is the call correct?
+  Answer **AGREE** or **DISAGREE** with the Judge, in one line, after checking: the stop
+  is 5-10% and the target 10-20% (swing); the grade matches the call (no TAKE on C);
+  results are not inside the hold; the news does not contradict the call; for value,
+  the concall headlines support the growth numbers (a one-off profit jump is not
+  growth); and the trade fits the market regime. Name the rule from `docs/STRATEGY.md`
+  that it breaks, if any.
 
-- A **core momentum** stock: no fixed time. Hold while it ranks in the top 40 at each
-  month-end review, and sell on a -15% stop. In testing, the median hold was **62 days**,
-  and half of all holds lasted **31 to 124 days** (1 to 4 months). Its next check is
-  `core.review_on`.
-- A **swing setup**: give its `hold` and `exit_by` from the JSON, plus the strategy record
-  `swing.records[<strategy>].all`: `median_days` (typical hold), `median_days_to_target`
-  (how fast winners got there), `p75_days`. The hard limit is `hold_sessions` (20 for
-  breakout, pivot and pullback; 10 for RSI(2)). Exit at the close on `exit_by` if neither
-  the stop nor the target has hit.
-- A **stock in the journal**: run `tradingagents journal list`, find its strategy and
-  buy date, and apply the matching rule above (sessions held so far versus the limit).
+For a deeper look at the best value buy, offer the `stock-report` skill (a full equity
+research report as a PDF), and run it only if the user says yes.
+
+## 4. Close: what to do now
+
+1. Core: BUY / HOLD / SELL as listed at the next open on review day (`core.review_on`) or
+   when you first start. Otherwise hold, and check the -15% stops.
+2. Swing: an SL buy order (trigger = entry, limit = max) before 09:15 IST; after the fill,
+   a GTT OCO with the stop and the target. Skip anything the Auditor marked WRONG.
+3. Value: a limit buy at or below the entry shown, with the stop and target as a GTT OCO;
+   review on the next quarterly result.
+4. Then ask: "How much do you want to invest, and in which list (swing, core or value)?"
+
+## 5. When the user gives an amount
+
+"Rs 1,00,000 for swing" (or core, or value, optionally "only 1, 3 and 5"):
+
+```bash
+tradingagents allocate --amount 100000 --for swing --markdown            # every call except WRONG
+tradingagents allocate --amount 100000 --for swing --picks 1,3,5 --markdown
+```
+
+Show the table: quantity, capital, max loss per stock, cash left, and the loss if every
+stop hits. Remind them to log fills with `/trade-journal`.
+
+## 6. Holding-time questions
+
+- **Core momentum**: hold while it ranks in the top 40 at each month-end review, and sell
+  on the -15% stop. The median hold in testing was 62 days (half lasted 31-124 days).
+- **Swing**: give the setup's `hold` and `exit_by`, plus `swing.records[<strategy>].all`
+  (`median_days`, `median_days_to_target`, `p75_days`). The limit is 20 sessions (10 for RSI(2)).
+- **Value**: 1-3 months, reviewed on each quarterly result. This hold is not backtested; say so.
+- **A position in the journal**: `tradingagents journal list`, then apply the matching rule.
+
+## 7. Feedback: how the bot gets better
+
+When the user says a call was good or bad, or why:
+
+```bash
+tradingagents calls feedback DIVISLAB "results gap hit the stop" --bad
+tradingagents calls review                    # how past calls played out, by grade / strategy / auditor
+```
+
+Run `calls review` when asked "how good are your calls?". Report the hit rate and the
+average return by grade and auditor status, and suggest a rule change only when a group
+has 20 or more closed calls.
 
 ## Rules
 
-- The strategy is in `docs/STRATEGY.md` (rules 1-22). Quote the rule numbers when
-  the user asks why.
-- Never say "sure", "guaranteed" or "multibagger". Momentum returned +15.1% a year with
-  a -20% worst drop in testing, versus the Nifty's +11.3% and -38%. That is history, not
-  a promise.
+- Never say "sure", "guaranteed" or "multibagger". In testing, the momentum core
+  returned +14-15% a year with a ~-20% worst drop (Nifty: +11.3% / -38%). The value
+  screen is not backtested. Say so when it matters.
 - Not investment advice; the user places every order.

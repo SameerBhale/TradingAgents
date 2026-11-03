@@ -26,6 +26,11 @@ if sys.platform == "win32":  # pragma: no cover - platform dependent
 else:
     _NO_CONSOLE_ERRORS = ()
 
+# Redirected output (to a file, a pipe or Claude Code) is written as UTF-8 so headlines
+# with Rs or other non-Latin symbols cannot crash a run on Windows' default code page.
+if not sys.stdout.isatty() and hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - platform dependent
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 app = typer.Typer(
     name="TradingAgents",
     help="TradingAgents CLI: Multi-Agents LLM Financial Trading Framework",
@@ -221,25 +226,111 @@ def setups(
     core: float = typer.Option(80.0, "--core", help="Percent of capital for the momentum core (rest: swing)"),
     risk: float = typer.Option(1.0, "--risk", help="Percent of the swing capital risked per swing trade"),
     top: int = typer.Option(10, "--top", help="How many swing setups to list"),
+    mode: str = typer.Option("balanced", "--mode", help="Core in a weak market: safe, balanced or aggressive"),
+    value: int = typer.Option(5, "--value", help="How many value buys to list (0 to skip)"),
     refresh: bool = typer.Option(False, "--refresh", help="Download fresh data even if today's is cached"),
     as_json: bool = typer.Option(False, "--json", help="Print as JSON"),
     markdown: bool = typer.Option(False, "--markdown", help="Print the tables as Markdown"),
-    no_news: bool = typer.Option(False, "--no-news", help="Skip the headline check (faster)"),
+    no_news: bool = typer.Option(False, "--no-news", help="Skip headlines and concall news (faster)"),
 ):
-    """The survival plan: momentum core portfolio + top 10 swing setups (stocks and ETFs).
+    """The survival plan: momentum core + top 10 swing setups + best value buys, audited.
 
-    Name, ticker, cap class, entry, stoploss, target, exit, holding time and quantity
-    for each. Free data. Run after 16:30 IST; review the core on the last trading day
-    of each month.
+    Name, ticker, cap class, grade with its meaning, entry, stoploss (5-10% swing),
+    target (10-20% swing), exit, holding time, quantity and the auditor's check.
+    Free data. Run after 16:30 IST; review the core on the last trading day of the month.
     """
     from cli.setups import setups_command
 
     try:
-        code = setups_command(capital, core, risk, top, refresh, as_json, markdown, no_news)
+        code = setups_command(capital, core, risk, top, refresh, as_json, markdown, no_news, mode.lower(), value)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
     raise typer.Exit(code=code)
+
+
+@app.command()
+def allocate(
+    amount: float = typer.Option(..., "--amount", help="Money to invest, INR"),
+    kind: str = typer.Option("swing", "--for", help="swing, core or value"),
+    picks: str = typer.Option(None, "--picks", help="Only these ranks, e.g. 1,3,5 (default: all)"),
+    risk: float = typer.Option(1.0, "--risk", help="Swing: percent of the amount risked per trade"),
+    markdown: bool = typer.Option(False, "--markdown", help="Print as a Markdown table"),
+):
+    """Size the latest /trade-setups list for an amount: quantity, capital and max loss per stock."""
+    from cli.setups import allocate as do_allocate
+
+    try:
+        ranks = [int(x) for x in picks.split(",")] if picks else None
+        r = do_allocate(amount, kind.lower(), ranks, risk)
+    except ValueError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    lines = [f"Allocation of Rs {amount:,.0f} for {r['for']} (list of {r['as_of']})", "",
+             "| # | Ticker | Entry | Stoploss | Target | Qty | Capital | Max loss | Exit |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for x in r["rows"]:
+        lines.append(f"| {x['rank']} | {x['symbol'].removesuffix('.NS')} | {x['entry']:,.2f} | {x['stop']:,.2f} | "
+                     f"{x['target'] if x['target'] else 'none (trend)'} | {x['qty']} | {x['capital']:,} | "
+                     f"{x['max_loss']:,} | {x['exit_by']} |")
+    lines += ["", f"Capital used Rs {r['capital_used']:,}; cash left Rs {r['cash_left']:,}; "
+              f"loss if every stop hits Rs {r['max_total_loss']:,}."]
+    text = "\n".join(lines)
+    if markdown:
+        print(text)
+    else:
+        from rich.markdown import Markdown
+
+        console.print(Markdown(text))
+
+
+calls_app = typer.Typer(help="Every published call, its real outcome, and your feedback.", no_args_is_help=True)
+app.add_typer(calls_app, name="calls")
+
+
+@calls_app.command("review")
+def calls_review(as_json: bool = typer.Option(False, "--json", help="Print as JSON")):
+    """How past calls actually played out: hit rate by grade, strategy, verdict and auditor status."""
+    import json as _json
+
+    from tradingagents import calls as calls_mod
+    from tradingagents.dataflows.vendors.yahoo.bulk import download_daily
+
+    rows = calls_mod._load()
+    if not rows:
+        console.print("No calls logged yet: each /trade-setups run logs its calls.")
+        return
+    bars = download_daily(sorted({r["symbol"] for r in rows}), period="6mo")
+    rep = calls_mod.review(bars)
+    if as_json:
+        print(_json.dumps({k: v for k, v in rep.items() if k != "rows"}, indent=1, default=str))
+        return
+    console.print(f"{rep['calls']} calls logged; status: {rep['by_status']}")
+    if rep["closed"]:
+        console.print(f"Closed: {rep['closed']}, {rep['win_rate']}% winners, avg {rep['avg_ret_pct']:+.2f}% per call")
+        for key in ("by_kind", "by_grade", "by_strategy", "by_audit", "by_verdict"):
+            console.print(f"  {key[3:]}: " + ", ".join(f"{k} n={v['n']} win={v['win_rate']:.0f}% avg={v['avg_ret_pct']:+.2f}%"
+                                                       for k, v in rep[key].items()))
+    for r in rep["feedback"]:
+        console.print(f"  feedback {r['as_of']} {r['symbol']}: {[f['note'] for f in r['feedback']]}")
+
+
+@calls_app.command("feedback")
+def calls_feedback(
+    ticker: str = typer.Argument(..., help="Stock of the call, e.g. DIVISLAB"),
+    note: str = typer.Argument(..., help="What was right or wrong about the call"),
+    good: bool = typer.Option(None, "--good/--bad", help="Was the call good?"),
+    on: str = typer.Option(None, "--date", help="The call's date (default: the latest call on the stock)"),
+):
+    """Attach your feedback to a call; `calls review` shows it next to the outcomes."""
+    from tradingagents import calls as calls_mod
+
+    try:
+        r = calls_mod.feedback(ticker, note, None if good is None else ("good" if good else "bad"), on)
+    except ValueError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(f"Noted on the {r['as_of']} {r['kind']} call on {r['symbol']}.")
 
 
 def _register_journal():
