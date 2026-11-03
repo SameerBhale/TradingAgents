@@ -213,6 +213,32 @@ def scan(
         raise typer.Exit(code=1) from None
 
 
+@app.command()
+def setups(
+    capital: float = typer.Option(500_000, "--capital", help="Your total trading capital in INR"),
+    core: float = typer.Option(80.0, "--core", help="Percent of capital for the momentum core (rest: swing)"),
+    risk: float = typer.Option(1.0, "--risk", help="Percent of the swing capital risked per swing trade"),
+    top: int = typer.Option(10, "--top", help="How many swing setups to list"),
+    refresh: bool = typer.Option(False, "--refresh", help="Download fresh data even if today's is cached"),
+    as_json: bool = typer.Option(False, "--json", help="Print as JSON"),
+    markdown: bool = typer.Option(False, "--markdown", help="Print the tables as Markdown"),
+    no_news: bool = typer.Option(False, "--no-news", help="Skip the headline check (faster)"),
+):
+    """The survival plan: momentum core portfolio + top 10 swing setups (stocks and ETFs).
+
+    Name, ticker, cap class, entry, stoploss, target, exit, holding time and quantity
+    for each. Free data. Run after 16:30 IST; review the core on the last trading day
+    of each month.
+    """
+    from cli.setups import setups_command
+
+    try:
+        raise typer.Exit(code=setups_command(capital, core, risk, top, refresh, as_json, markdown, no_news))
+    except (RuntimeError, ValueError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+
+
 def _register_journal():
     from cli.journal import app as journal_app
 

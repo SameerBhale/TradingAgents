@@ -32,7 +32,7 @@ import pandas as pd
 from tradingagents.dataflows import india
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.vendors import google_news
-from tradingagents.dataflows.vendors.yahoo.bulk import download_daily, next_earnings_date
+from tradingagents.dataflows.vendors.yahoo.bulk import next_earnings_date
 from tradingagents.scanner import engine as E, strategies as S
 
 NIFTY = "^NSEI"
@@ -88,12 +88,26 @@ class Idea:
     size_note: str
     earnings_date: str | None
     earnings_in_window: bool
+    hold: str = ""
     news: list[dict] = field(default_factory=list)
     news_flag: str = "none found"
     bull: list[str] = field(default_factory=list)
     bear: list[str] = field(default_factory=list)
     verdict: str = ""
     score: float = 0.0
+
+
+def hold_text(strategy: str, rec: dict, max_hold: int) -> str:
+    """How long to hold, from the strategy's own closed trades across NSE."""
+    allr = rec.get("all", {})
+    typ = allr.get("median_days")
+    to_target = allr.get("median_days_to_target")
+    if not typ:
+        return f"up to {max_hold} sessions"
+    text = f"typ. {typ:.0f} sessions"
+    if to_target and to_target == to_target:  # not NaN
+        text += f", winners hit target in ~{to_target:.0f}"
+    return text + f"; max {max_hold}"
 
 
 def _universe() -> dict[str, india.IndianSecurity]:
@@ -243,22 +257,17 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
 
 def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
               refresh: bool = False, progress=None, as_of: date | None = None,
-              with_news: bool = True) -> dict:
-    universe = _universe()
-    settled = india.market_status().last_completed_session
-    last = min(as_of, settled) if as_of else settled
-    raw = download_daily(list(universe) + [NIFTY], period="5y", stamp=settled.isoformat(),
-                         progress=progress, refresh=refresh, probe=NIFTY)
-    if NIFTY not in raw:
-        raise RuntimeError("Yahoo returned no Nifty 50 data; try again shortly with --refresh.")
-    cut = pd.Timestamp(last)
-    nifty = raw.pop(NIFTY)
-    nifty = nifty[nifty.index <= cut]
-    data = {s: d[d.index <= cut] for s, d in raw.items() if s in universe}
-    data = {s: d for s, d in data.items() if len(d) > 260}
-    market = E.market_frame(nifty, data)
-    inds = {s: S.indicators(d) for s, d in data.items()}
-    records = _records(inds, market, f"{last.isoformat()}-{len(inds)}")
+              with_news: bool = True, md=None) -> dict:
+    from tradingagents.scanner import data as data_mod
+
+    md = md or data_mod.load(refresh=refresh, progress=progress, as_of=as_of)
+    last = md.settled if as_of is None else min(as_of, md.settled)
+    universe = md.securities
+    nifty = md.nifty
+    market = E.market_frame(nifty, md.stocks)
+    inds = {s: S.indicators(d) for s, d in md.stocks.items()}
+    records = _records(inds, market, f"{md.last.isoformat()}-{len(inds)}")
+    inds.update({s: S.indicators(d) for s, d in md.etfs.items()})
     day = market.index[-1]
     mrow = market.iloc[-1]
 
@@ -281,9 +290,12 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
             rr = reward / (s.entry - s.stop) if reward > 0 else 0.0
             qty = _size(capital, risk_pct, s.entry, s.stop, factor)
             sec = universe[sym]
+            is_etf = sym in md.etfs
             idea = Idea(
-                rank=0, grade=grade, symbol=sym, name=sec.name, cap=india.cap_class(sym),
-                industry=india.industry(sym), strategy=name, strategy_label=S.LABELS[name],
+                rank=0, grade=grade, symbol=sym, name=sec.name,
+                cap="ETF" if is_etf else india.cap_class(sym),
+                industry="ETF" if is_etf else india.industry(sym), strategy=name,
+                strategy_label=S.LABELS[name],
                 close=round(float(row["Close"]), 2), entry_type=s.entry_type, entry=s.entry,
                 max_entry=round(s.entry * 1.03, 2) if s.entry_type == "stop" else round(s.entry * 1.01, 2),
                 stop=s.stop, target=round(target, 2), exit_rule=s.exit_rule,
@@ -293,6 +305,7 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
                 max_loss=round(qty * (s.entry - s.stop), 0),
                 size_note="half size (strategy not working lately)" if factor < 1 else "full size",
                 earnings_date=None, earnings_in_window=False,
+                hold=hold_text(name, records[name], s.max_hold),
             )
             six = records[name].get("6m", {})
             idea.score = (
@@ -300,7 +313,7 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
                 + (six.get("expectancy_r", 0) or 0) * 5
                 - idea.risk_pct * 0.2
                 + min(rr, 3) * 0.3
-                + {"Large": 0.3, "Mid": 0.2, "Small": 0.0}[idea.cap]
+                + {"Large": 0.3, "Mid": 0.2, "Small": 0.0, "ETF": 0.3}.get(idea.cap, 0.0)
             )
             raw_ideas.append((idea, row))
 
@@ -313,7 +326,7 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
 
     def enrich(pair):
         idea, _ = pair
-        when = next_earnings_date(idea.symbol)
+        when = None if idea.cap == "ETF" else next_earnings_date(idea.symbol)
         if when is not None and str(when) > str(day.date()):  # a past date is not the next one
             idea.earnings_date = str(when)
             idea.earnings_in_window = idea.earnings_date <= idea.exit_by
@@ -357,7 +370,8 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
         },
         "ideas": [asdict(i) for i in ideas],
         "candidates": len(best),
-        "scanned": len(inds),
+        "scanned": len(md.stocks),
+        "etfs_scanned": len(md.etfs),
         "records": records,
         "notes": notes,
         "capital": capital, "risk_pct": risk_pct,

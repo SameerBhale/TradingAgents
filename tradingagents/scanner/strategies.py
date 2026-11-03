@@ -215,7 +215,8 @@ def simulate(ind: pd.DataFrame, i: int, s: Setup, arrays) -> dict | None:
         exit_px = c[j]
     net = exit_px / entry - 1 - COST_PCT / 100
     return {"entry_date": ind.index[e], "exit_date": ind.index[j], "entry": entry, "exit": exit_px,
-            "outcome": outcome, "days": j - e + 1, "ret_pct": net * 100, "r": net * entry / risk}
+            "outcome": outcome, "days": j - e + 1, "ret_pct": net * 100, "r": net * entry / risk,
+            "stop": s.stop}
 
 
 def backtest(name: str, ind: pd.DataFrame, market: pd.DataFrame | None,

@@ -72,30 +72,121 @@ def test_news_flags_use_whole_words():
 
 
 @pytest.mark.unit
+def _md(stocks, nifty, etfs=None, secs=None):
+    from tradingagents.scanner.data import MarketData
+
+    last = nifty.index[-1].date()
+    return MarketData(stocks, etfs or {}, nifty, last, last, secs or {})
+
+
 def test_run_daily_offline(monkeypatch):
     df = _uptrend_with_dip()
     nifty = _frame(np.linspace(100, 130, len(df)))
     sec = D.india.IndianSecurity("TESTCO", "Test Company Limited", "EQ", "EQUITY", "INE000000000", "2000-01-01")
     last = df.index[-1].date()
-
-    class Status:
-        last_completed_session = last
-
-    monkeypatch.setattr(D, "_universe", lambda: {"TESTCO.NS": sec})
-    monkeypatch.setattr(D.india, "market_status", lambda now=None: Status())
     monkeypatch.setattr(D.india, "cap_class", lambda s: "Mid")
-    monkeypatch.setattr(D, "download_daily", lambda *a, **k: {"TESTCO.NS": df, "^NSEI": nifty})
     monkeypatch.setattr(D, "next_earnings_date", lambda s: None)
     monkeypatch.setattr(D, "_records", lambda inds, market, stamp: {
         n: {"all": {"trades": 0}, "12m": {"trades": 0}, "6m": {"trades": 0}} for n in S.STRATEGIES})
-    r = D.run_daily(capital=500_000, risk_pct=1.0, top=10, with_news=False)
+    md = _md({"TESTCO.NS": df}, nifty, secs={"TESTCO.NS": sec})
+    r = D.run_daily(capital=500_000, risk_pct=1.0, top=10, with_news=False, md=md)
     assert r["as_of"] == str(last)
     assert len(r["ideas"]) == 1
     idea = r["ideas"][0]
     assert idea["symbol"] == "TESTCO.NS" and idea["cap"] == "Mid"
     assert idea["stop"] < idea["entry"] < idea["target"]
     assert idea["grade"] == "C" and idea["quantity"] > 0  # no positive record: half size
-    assert idea["bull"] and idea["verdict"]
+    assert idea["bull"] and idea["verdict"] and idea["hold"]
+
+
+def test_etf_ideas_are_labelled_etf(monkeypatch):
+    df = _uptrend_with_dip()
+    nifty = _frame(np.linspace(100, 130, len(df)))
+    sec = D.india.IndianSecurity("TESTBEES", "Test Nifty ETF", "EQ", "ETF", "INF000000000", "2010-01-01")
+    monkeypatch.setattr(D, "_records", lambda inds, market, stamp: {
+        n: {"all": {"trades": 0}, "12m": {"trades": 0}, "6m": {"trades": 0}} for n in S.STRATEGIES})
+    md = _md({}, nifty, etfs={"TESTBEES.NS": df}, secs={"TESTBEES.NS": sec})
+    r = D.run_daily(top=10, with_news=False, md=md)
+    assert r["ideas"] and r["ideas"][0]["cap"] == "ETF"
+    assert r["ideas"][0]["earnings_date"] is None
+
+
+def test_hold_text_from_record():
+    rec = {"all": {"median_days": 13.0, "median_days_to_target": 8.0}}
+    assert D.hold_text("breakout", rec, 20) == "typ. 13 sessions, winners hit target in ~8; max 20"
+    assert D.hold_text("rsi2", {"all": {"trades": 0}}, 10) == "up to 10 sessions"
+
+
+def test_cash_etfs_are_not_trade_candidates():
+    from tradingagents.scanner.data import etf_universe
+
+    names = " ".join(s.name.lower() for s in etf_universe().values())
+    assert "liquid" not in names and "1d rate" not in names
+    assert "GOLDBEES.NS" in etf_universe() and "NIFTYBEES.NS" in etf_universe()
+
+
+def _momentum_md(n_stocks=30, days=300, regime_up=True):
+    stocks, secs = {}, {}
+    for k in range(n_stocks):
+        drift = 0.0005 + k * 0.00005  # higher k = stronger trend
+        noise = np.random.default_rng(k).normal(0, 0.01, days)
+        closes = 150 * np.exp(np.cumsum(drift + noise))
+        df = _frame(closes, vol=1e6 + k)
+        stocks[f"S{k:02d}.NS"] = df
+        secs[f"S{k:02d}.NS"] = D.india.IndianSecurity(f"S{k:02d}", f"Stock {k}", "EQ", "EQUITY", "X", "2000-01-01")
+    trend = np.linspace(100, 130, days) if regime_up else np.linspace(130, 100, days)
+    return _md(stocks, _frame(trend), secs=secs)
+
+
+def test_momentum_core_buys_top_20_with_stops():
+    from tradingagents.scanner import momentum as M
+
+    r = M.core_picks(_momentum_md(), core_capital=400_000)
+    assert r["regime_on"]
+    picks = r["picks"]
+    assert len(picks) == M.TOP_N
+    assert all(p["action"] == "BUY" for p in picks)
+    assert [p["rank"] for p in picks] == sorted(p["rank"] for p in picks)
+    for p in picks:
+        assert p["stop"] == pytest.approx(p["entry"] * 0.85, abs=0.01)
+        assert p["capital_needed"] <= 400_000 / 20 + 1
+
+
+def test_momentum_core_holds_and_sells_against_the_journal():
+    from tradingagents.scanner import momentum as M
+
+    md = _momentum_md()
+    ranked = M.ranking(md)
+    weakest = ranked["symbol"].iloc[-1] if len(ranked) > M.KEEP_RANK else None
+    best = ranked["symbol"].iloc[0]
+    held = {best: 100.0}
+    if weakest:
+        held[weakest] = 100.0
+    r = M.core_picks(md, 400_000, held)
+    by = {p["symbol"]: p for p in r["picks"]}
+    assert by[best]["action"] in ("HOLD", "SELL (stop hit)") and by[best]["entry"] == 100.0
+
+
+def test_momentum_regime_off_waits():
+    from tradingagents.scanner import momentum as M
+
+    r = M.core_picks(_momentum_md(regime_up=False), 400_000, {"S29.NS": 100.0})
+    assert not r["regime_on"]
+    assert all(p["action"] in ("WAIT", "SELL (regime off)") for p in r["picks"])
+    assert any(s["symbol"] == "S29.NS" for s in r["sells"])
+
+
+def test_portfolio_replay_respects_slots_and_cash():
+    from tradingagents.scanner import portfolio as P
+
+    days = pd.bdate_range("2024-01-01", periods=40)
+    rows = []
+    for k in range(10):  # ten signals on the same day, each +10%
+        rows.append({"symbol": f"S{k}", "strategy": "breakout", "signal_date": days[0], "entry_date": days[1],
+                     "exit_date": days[10], "entry": 100.0, "exit": 110.0, "stop": 95.0, "ret_pct": 10.0, "r": 2.0})
+    r = P.replay(pd.DataFrame(rows), P.Account(capital=100_000, max_positions=4))
+    assert r["trades"] == 4
+    assert r["final_equity"] > 100_000
 
 
 @pytest.mark.unit

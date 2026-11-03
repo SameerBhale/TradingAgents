@@ -231,6 +231,21 @@ TradingAgents works with any market Yahoo Finance covers, using the exchange-suf
 - China A-shares: Shanghai `.SS`, Shenzhen `.SZ` (e.g. `600519.SS` for Kweichow Moutai)
 - Crypto: `BTC-USD`, `ETH-USD`
 
+### The Survival Plan: `/trade-setups` and `/trade-journal` (free, no API key)
+
+In Claude Code, inside this folder:
+
+| Command | What it does |
+|---|---|
+| `/trade-setups` (or `/trade-setup`) | **Core**: the momentum portfolio (top 20 by risk-adjusted momentum among the 100 most traded NSE stocks, monthly review, -15% stop, LIQUIDBEES when the Nifty is below its 200-DMA) with BUY / HOLD / SELL / WAIT. **Swing**: the top 10 setups (stocks and ETFs). Each row has name, ticker, cap (Large/Mid/Small/ETF), entry, stoploss, target, exit date, holding time, R:R and quantity, plus a bull-vs-bear debate. Answers "how long should I hold X?". |
+| `/trade-journal` | Log buys and sells (entry, exit, stoploss or target hit, charges), and see P&L, R, days held, and capital used and free. |
+
+Without Claude Code: `tradingagents setups --capital 500000` and `tradingagents journal ...`.
+
+The plan, as 22 numbered rules with the numbers behind them: [docs/STRATEGY.md](docs/STRATEGY.md).
+Tested 2017-2026 with a point-in-time universe, after costs: the momentum core returned **+15.1% a year,
+worst drop -20.1%**; the Nifty 50 returned +11.3% a year, with a worst drop of -38.4%. Past results are not a promise.
+
 ### Daily top-10 trade ideas, trade journal (free, no API key)
 
 ```bash
