@@ -1,4 +1,4 @@
-"""The four strategies, the daily top-10 scan (offline) and the trade journal."""
+"""The five strategies, the daily scan (offline) and the trade journal."""
 
 from datetime import date
 
@@ -19,49 +19,74 @@ def _frame(closes, start="2024-01-01", vol=1e6):
 
 def _uptrend_with_dip(n=300):
     closes = list(np.linspace(200, 400, n - 6))
-    closes += [395, 388, 382, 379, 381, 392]  # dip toward the 20-DMA, then a reversal day
+    closes += [399, 396, 394, 393, 395, 399]  # dip to the 20 EMA, then a reversal day
     df = _frame(closes)
-    df.iloc[-1, df.columns.get_loc("High")] = 393.0
+    df.iloc[-1, df.columns.get_loc("High")] = 400.0
+    return df
+
+
+def _vcp_frame():
+    """A stage-2 uptrend, then a base that tightens 20% -> 10% -> 4% on drying volume."""
+    up = list(np.linspace(150, 400, 260))
+    rng = np.random.default_rng(0)
+    base = (list(400 - 40 * np.abs(np.sin(np.linspace(0, np.pi, 25))))       # ~10-20% deep
+            + list(400 - 20 * np.abs(np.sin(np.linspace(0, np.pi, 15))))     # ~5-10%
+            + list(398 + rng.uniform(-3, 3, 10)))                            # tight finish
+    closes = up + base
+    df = _frame(closes)
+    df["Volume"] = np.r_[np.full(len(up), 2e6), np.linspace(2e6, 0.8e6, len(base))]
     return df
 
 
 @pytest.mark.unit
-def test_rsi2_signal_on_a_sharp_dip_in_an_uptrend():
-    closes = list(np.linspace(200, 400, 295)) + [390, 375, 362]
-    ind = S.indicators(_frame(closes))
-    assert ind["rsi2"].iloc[-1] < 10
-    assert bool(S.signals("rsi2", ind, None).iloc[-1])
-    s = S.setup_for("rsi2", ind.iloc[-1])
-    assert s.entry_type == "open" and s.exit_sma5 and s.stop < s.entry
+def test_trend_template_and_vcp_signal():
+    ind = S.indicators(_vcp_frame())
+    assert bool(S.trend_template(ind).iloc[-1])
+    r = ind.iloc[-1]
+    assert r["c1"] > r["c2"] > r["c3"]
+    assert bool(S.signals("vcp", ind, None).iloc[-1])
+    s = S.setup_for("vcp", r)
+    assert s.entry == pytest.approx(r["high10"] * 1.001, abs=0.01)
+    assert 5.0 - 0.01 <= s.risk_pct <= 10.0 + 0.01
 
 
 @pytest.mark.unit
-def test_pullback_signal_and_plan():
+def test_episodic_pivot_on_a_news_gap():
+    closes = list(np.linspace(200, 300, 280))
+    df = _frame(closes)
+    df.loc[df.index[-1], ["Open", "High", "Low", "Close", "Volume"]] = [312.0, 326.0, 311.0, 324.0, 5e6]
+    ind = S.indicators(df)
+    assert bool(S.signals("ep", ind, None).iloc[-1])
+    s = S.setup_for("ep", ind.iloc[-1])
+    assert s.entry == pytest.approx(326.0 * 1.001, abs=0.01) and s.stop < 311.0
+
+
+@pytest.mark.unit
+def test_kell_crossback_on_a_dip_to_the_emas():
     ind = S.indicators(_uptrend_with_dip())
-    assert bool(S.signals("pullback", ind, None).iloc[-1])
-    s = S.setup_for("pullback", ind.iloc[-1])
-    assert s.entry == pytest.approx(393.0 * 1.001, abs=0.01)
-    assert s.risk_pct <= 6.0 + 1e-9
+    assert bool(S.signals("crossback", ind, None).iloc[-1])
+    s = S.setup_for("crossback", ind.iloc[-1])
+    assert s.entry == pytest.approx(400.0 * 1.001, abs=0.01)
     assert s.target == pytest.approx(s.entry + 2 * (s.entry - s.stop), abs=0.02)
 
 
 @pytest.mark.unit
-def test_rsi2_exits_on_close_above_sma5():
-    ind = S.indicators(_frame(list(np.linspace(200, 400, 295)) + [390, 375, 362, 366, 380, 395] + [395] * 10))
-    i = 297
-    s = S.setup_for("rsi2", ind.iloc[i])
-    arrays = tuple(ind[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close", "sma5"))
-    t = S.simulate(ind, i, s, arrays)
-    assert t["outcome"] == "target" and t["days"] <= 3 and t["r"] > 0
+def test_rs_rank_is_a_cross_sectional_percentile():
+    strong = S.indicators(_frame(np.linspace(100, 300, 300)))
+    weak = S.indicators(_frame(np.linspace(100, 120, 300)))
+    S.add_rs_rank({"A": strong, "B": weak})
+    assert strong["rs_rank"].iloc[-1] > weak["rs_rank"].iloc[-1]
 
 
 @pytest.mark.unit
-def test_grades():
-    rec_good = {"6m": {"trades": 30, "expectancy_r": 0.1}, "12m": {"trades": 60, "expectancy_r": 0.05}}
-    rec_bad = {"6m": {"trades": 30, "expectancy_r": -0.1}, "12m": {"trades": 60, "expectancy_r": 0.05}}
-    assert D._grade("breakout", rec_bad) == "A"
-    assert D._grade("pullback", rec_good) == "B"
-    assert D._grade("pullback", rec_bad) == "C"
+def test_verdict_grades():
+    good = {"6m": {"trades": 30, "expectancy_r": 0.1}, "12m": {"trades": 60, "expectancy_r": 0.05}}
+    mixed = {"6m": {"trades": 30, "expectancy_r": -0.1}, "12m": {"trades": 60, "expectancy_r": 0.05}}
+    bad = {"6m": {"trades": 30, "expectancy_r": -0.1}, "12m": {"trades": 60, "expectancy_r": -0.05}}
+    assert D._grade("vcp", good) == "GOOD"
+    assert D._grade("vcp", mixed) == "OK"
+    assert D._grade("flag", bad) == "AVOID"
+    assert D._grade("breakout", bad) == "OK"  # held up in every tested period
 
 
 @pytest.mark.unit
@@ -95,7 +120,8 @@ def test_run_daily_offline(monkeypatch):
     idea = r["ideas"][0]
     assert idea["symbol"] == "TESTCO.NS" and idea["cap"] == "Mid"
     assert idea["stop"] < idea["entry"] < idea["target"]
-    assert idea["grade"] == "C" and idea["quantity"] > 0  # no positive record: half size
+    assert idea["strategy"] == "crossback"
+    assert idea["grade"] == "AVOID" and idea["verdict"].startswith("AVOID")  # no record yet
     assert idea["bull"] and idea["verdict"] and idea["hold"]
 
 
@@ -114,7 +140,7 @@ def test_etf_ideas_are_labelled_etf(monkeypatch):
 def test_hold_text_from_record():
     rec = {"all": {"median_days": 13.0, "median_days_to_target": 8.0}}
     assert D.hold_text("breakout", rec, 20) == "typ. 13 sessions, winners hit target in ~8; max 20"
-    assert D.hold_text("rsi2", {"all": {"trades": 0}}, 10) == "up to 10 sessions"
+    assert D.hold_text("vcp", {"all": {"trades": 0}}, 20) == "up to 20 sessions"
 
 
 def test_cash_etfs_are_not_trade_candidates():

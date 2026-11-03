@@ -49,34 +49,70 @@ but the account barely grew over 10 years, so they are only the satellite.
    holds lasted 31 to 124 days). Some winners stay a year or more while they stay in the top 40.
 10. **Never** average down, add leverage or margin, or skip a review.
 
-## B. The swing satellite (20% of capital)
+## B. Swing setups (short term)
 
-11. **Stoploss 5-10%, target 10-20%** (2x the risk). Tested 2017-2026: breakouts kept their
-    edge in this band (+0.53%, +0.71% and +0.04% per trade across the three periods).
-    Setups outside the band are dropped.
-11a. Only **grade A** (52-week breakout) setups at full size. Trade grade B at full size
-    only while it is marked B. Grade C: paper-trade it, or use half size if you must.
-12. **Risk 1% of the swing capital per trade** (the quantity shown already does this),
-    with at most 25% of the swing capital in one stock.
-13. **Entry**: an SL buy order with trigger = entry and limit = max, for the next session
-    only. No fill means no trade.
-14. **Exit**: put the stoploss and target in a GTT OCO right after the fill. If neither
-    hits, sell at the close on the exit-by date (20 sessions for breakouts and pullbacks,
-    10 for RSI(2)).
-15. **Holding time**: breakouts typically last about 13 sessions, and winners hit the target in
-    about 8. Pullbacks last about 9 sessions; RSI(2) dips 2 to 4 sessions.
-16. Results date inside the hold: skip the trade, halve the size, or sell before the results.
+Five setups, each from a documented trader, all long-only on daily bars with a buy-stop
+entry (no fill, no trade):
 
-## B2. Value buys (part of the swing money, or your long-term money)
+| Setup | Source | Rule in one line |
+|---|---|---|
+| 52-week breakout | Darvas / O'Neil | close at a new 52-week high on 1.5x volume out of a base of 12% or less |
+| Minervini VCP | Mark Minervini, US Investing Champion 1997 (+155%) | passes the 8-point Trend Template (stage 2, RS rank >= 70), base tightens in steps (e.g. 20% -> 10% -> 4%) on drying volume |
+| Qullamaggie flag | Kristjan Kullamagi | a 30%+ run in 1-3 months, then a tight flag on the rising 10/20-day averages, ADR >= 3% |
+| Episodic pivot | Kristjan Kullamagi | a 3%+ gap and 6%+ day on 3x volume after news, closing strong, above the 200-DMA |
+| Kell EMA crossback | Oliver Kell, US Investing Champion 2020 (+941%) | a stage-2 leader dips to its 20 EMA and closes back above the 10 EMA and the prior high |
 
-16a. Screen: the 250 most traded stocks above their 200-DMA (or within 15% of the 52-week
-     high), with ROE >= 15%, debt/equity <= 100%, operating margin >= 10%, revenue and
-     earnings growing, P/E at or below the sector median, and PEG <= 1.5.
-16b. Read the concall headlines. A profit jump over 100% is often a one-off: the auditor
-     flags it.
-16c. Stop 5-10%, target 10-20%, and review on every quarterly result. **Not backtested**:
-     free fundamentals have no history. Size it like a grade-C idea until the calls review
-     shows it works.
+**10-year test** (2017-06 to 2026-11, 1,968 NSE stocks, 0.30% costs, stop 5-10%, target 2R,
+max 20 sessions; R per trade after costs):
+
+| Setup | 2017-21 | 2022-24 | 2024-26 (weak) | last 12 months | all |
+|---|---|---|---|---|---|
+| 52-week breakout | +0.09R | +0.10R | +0.04R | +0.04R | +0.09R (1,048 trades) |
+| Minervini VCP | +0.11R | +0.10R | -0.04R | +0.03R | +0.06R (2,435) |
+| Qullamaggie flag | +0.10R | +0.06R | -0.16R | -0.06R | +0.02R (4,351) |
+| Episodic pivot | +0.08R | +0.11R | +0.03R | -0.11R | +0.07R (662) |
+| Kell crossback | +0.09R | +0.13R | -0.12R | -0.05R | +0.06R (4,113) |
+
+The same breakout, **sold on a close below the 20-day EMA** instead of at the target (stop
+unchanged, max 60 sessions): +0.09R, +0.25R, +0.10R, last 12 months +0.29R; all +0.17R
+(1,020 trades), profit factor 1.34. It was the best exit in every period. The trailing
+exit did not rescue the other setups in 2024-26.
+
+Neither a market filter (Nifty above its 200-DMA with 50%+ breadth) nor a strict RS rank
+>= 90 fixed the weak period: the few "healthy" days in 2024-26 were near the top.
+
+What this means:
+
+11. **Stoploss 5-10%, target 10-20%** (2R). Setups outside the band are dropped.
+11a. **The verdict follows each setup's live record across NSE** (recomputed every run):
+    GOOD when its last 12 and 6 months are positive per trade; OK (half size) when one
+    is, or for breakouts (positive in every tested period); AVOID when both are negative.
+    A GOOD setup drops to OK when results fall inside the hold or the Nifty is below its
+    200-DMA; bad headlines make it AVOID.
+12. **Risk about 1% of the swing money per trade** (0.5% on OK), at most 25% in one stock.
+13. **Entry**: a stop-limit buy with trigger = "buy above" and limit = max, for the next
+    session only.
+14. **Exit**: stop and target in a GTT OCO right after the fill; if neither hits, sell on the
+    sell-by date (20 sessions). For breakouts, a close below the 20-day EMA is the
+    better-tested exit.
+15. **Holding time**: the row's Hold is the median of the setup's own trades (breakouts
+    about 12-15 sessions, VCP about 15, flags and crossbacks about 12-13).
+16. Results date inside the hold: halve the size, or sell before the results.
+
+Champion returns of several hundred percent came from concentrated, often leveraged,
+discretionary trading, with a few huge winners ridden for months. The mechanical
+versions above keep the entries and the risk control, and earn a small edge per trade.
+
+## B2. Value buys (medium to long term)
+
+16a. Screen: the 250 most traded stocks in Minervini's stage 2 (above the 150 and 200-day
+     averages, the 200-day rising, within 25% of the 52-week high), with ROE >= 15%,
+     debt/equity <= 100%, operating margin >= 10%, revenue and earnings growing, P/E at or
+     below the sector median, and PEG <= 1.5 (O'Neil's CAN SLIM growth tests).
+16b. A profit jump over 100% on revenue growth under 30% is dropped as a one-off, and so
+     is a cyclical (oil, gas, metals, mining) at a P/E under 8: peak-cycle earnings.
+16c. Stop 10-15% (under the 50-day average), target 2R (20-30%), hold 3-12 months, review
+     on every quarterly result. **Not backtested**: free fundamentals have no history.
 
 ## C. Survival rules (the account as a whole)
 
@@ -88,7 +124,7 @@ but the account barely grew over 10 years, so they are only the satellite.
 19. **At -30% from the peak** (worse than anything tested), stop everything and review.
     Something has changed.
 20. **Idle cash goes to LIQUIDBEES** (about 6-7% a year), never into a savings account.
-20a. **Never take a call the auditor marks WRONG.**
+20a. **Never take a call marked AVOID.**
 21. **Log every fill** in `/trade-journal` the same day, then check `journal stats` monthly
     against these numbers. A big gap from the backtest means you are not following the rules.
 22. **Taxes**: the core holds about 2 months, so most gains are short-term (STCG 20%). Gains
@@ -99,8 +135,8 @@ but the account barely grew over 10 years, so they are only the satellite.
 
 | When | What |
 |---|---|
-| Every trading day after 16:30 IST | `/trade-setups`: new swing setups, value buys, core stop checks |
-| When you decide to invest | tell `/trade-setups` the amount and list, e.g. "Rs 1,00,000 for swing" |
+| Every trading day after 18:00 IST | `/trade-setup`: top 5 swing and top 3 value (or the 18:30 mail from `alerts digest`) |
+| Market hours | `tradingagents alerts watch --gaps`: buy triggers, stop/target hits, gap-ups by mail |
 | Before 09:15 IST next morning | place the SL buy orders for swing setups; core BUYs at the open |
 | Last trading day of the month, after 16:30 | core review: BUY / HOLD / SELL from `/trade-setups` |
 | After every fill | `/trade-journal`: log it |
@@ -109,8 +145,7 @@ but the account barely grew over 10 years, so they are only the satellite.
 ## E. Getting better: the feedback loop
 
 23. Every `/trade-setups` run logs its calls. `tradingagents calls review` replays them on
-    the prices that followed, and shows the hit rate by grade, strategy, verdict and auditor
-    status.
+    the prices that followed, and shows the hit rate by verdict and strategy.
 24. Tell the bot when a call was good or bad: `tradingagents calls feedback <ticker> "<why>"
     --good/--bad`.
 25. Change a rule only when a group has 20 or more closed calls that disagree with the
@@ -122,5 +157,6 @@ but the account barely grew over 10 years, so they are only the satellite.
   somewhat lower.
 - **Momentum can lag the index for years**: 2017-2019 trailed the Nifty. The plan only works
   if you keep following it through those years.
-- **Data**: the data is free and can lag (Yahoo). Always confirm prices in your broker.
+- **Data**: the data is free and can lag (Yahoo). Missing sessions are filled from NSE's own
+  bhavcopy; live alert prices can be a few minutes late. Always confirm prices in your broker.
 - **Not advice**: past results are not a promise. This is software, not investment advice.

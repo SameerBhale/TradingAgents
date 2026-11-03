@@ -8,6 +8,7 @@ from datetime import date
 import pandas as pd
 
 from tradingagents.dataflows import india
+from tradingagents.dataflows.vendors import nse_bhav
 from tradingagents.dataflows.vendors.yahoo.bulk import download_daily
 
 NIFTY = "^NSEI"
@@ -53,6 +54,12 @@ def load(refresh: bool = False, progress=None, as_of: date | None = None) -> Mar
     )
     if NIFTY not in raw:
         raise RuntimeError("Yahoo returned no Nifty 50 data; try again shortly with --refresh.")
+    # Yahoo lagging (or a row with volume but no prices): fill the gap from NSE's bhavcopy.
+    missing, day = [], raw[NIFTY].index[-1].date()
+    while (day := india.next_trading_day(day)) <= settled and len(missing) < 5:
+        missing.append(day)
+    if missing:
+        nse_bhav.patch(raw, missing, NIFTY)
     cut = pd.Timestamp(min(as_of, settled) if as_of else settled)
     nifty = raw.pop(NIFTY)
     nifty = nifty[nifty.index <= cut]

@@ -222,27 +222,25 @@ def scan(
 
 @app.command()
 def setups(
-    capital: float = typer.Option(500_000, "--capital", help="Your total trading capital in INR"),
-    core: float = typer.Option(80.0, "--core", help="Percent of capital for the momentum core (rest: swing)"),
-    risk: float = typer.Option(1.0, "--risk", help="Percent of the swing capital risked per swing trade"),
-    top: int = typer.Option(10, "--top", help="How many swing setups to list"),
+    top: int = typer.Option(5, "--top", help="How many swing setups to list"),
+    value: int = typer.Option(3, "--value", help="How many value buys to list (0 to skip)"),
+    with_core: bool = typer.Option(False, "--with-core", help="Also list the momentum core portfolio"),
     mode: str = typer.Option("balanced", "--mode", help="Core in a weak market: safe, balanced or aggressive"),
-    value: int = typer.Option(5, "--value", help="How many value buys to list (0 to skip)"),
     refresh: bool = typer.Option(False, "--refresh", help="Download fresh data even if today's is cached"),
     as_json: bool = typer.Option(False, "--json", help="Print as JSON"),
     markdown: bool = typer.Option(False, "--markdown", help="Print the tables as Markdown"),
     no_news: bool = typer.Option(False, "--no-news", help="Skip headlines and concall news (faster)"),
 ):
-    """The survival plan: momentum core + top 10 swing setups + best value buys, audited.
+    """Top 5 swing setups (short term) and top 3 value buys (medium/long term).
 
-    Name, ticker, cap class, grade with its meaning, entry, stoploss (5-10% swing),
-    target (10-20% swing), exit, holding time, quantity and the auditor's check.
-    Free data. Run after 16:30 IST; review the core on the last trading day of the month.
+    Name, ticker, cap, setup, a plain GOOD / OK / AVOID verdict, entry, stoploss
+    (5-10% swing), target (10-20% swing), exit and holding time. Free data; missing
+    Yahoo sessions are filled from NSE's bhavcopy. Best run after 18:00 IST.
     """
     from cli.setups import setups_command
 
     try:
-        code = setups_command(capital, core, risk, top, refresh, as_json, markdown, no_news, mode.lower(), value)
+        code = setups_command(top, value, refresh, as_json, markdown, no_news, with_core, mode.lower())
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
@@ -290,7 +288,7 @@ app.add_typer(calls_app, name="calls")
 
 @calls_app.command("review")
 def calls_review(as_json: bool = typer.Option(False, "--json", help="Print as JSON")):
-    """How past calls actually played out: hit rate by grade, strategy, verdict and auditor status."""
+    """How past calls actually played out: hit rate by grade, strategy, verdict."""
     import json as _json
 
     from tradingagents import calls as calls_mod
@@ -308,7 +306,7 @@ def calls_review(as_json: bool = typer.Option(False, "--json", help="Print as JS
     console.print(f"{rep['calls']} calls logged; status: {rep['by_status']}")
     if rep["closed"]:
         console.print(f"Closed: {rep['closed']}, {rep['win_rate']}% winners, avg {rep['avg_ret_pct']:+.2f}% per call")
-        for key in ("by_kind", "by_grade", "by_strategy", "by_audit", "by_verdict"):
+        for key in ("by_kind", "by_grade", "by_strategy", "by_verdict"):
             console.print(f"  {key[3:]}: " + ", ".join(f"{k} n={v['n']} win={v['win_rate']:.0f}% avg={v['avg_ret_pct']:+.2f}%"
                                                        for k, v in rep[key].items()))
     for r in rep["feedback"]:
@@ -331,6 +329,62 @@ def calls_feedback(
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
     console.print(f"Noted on the {r['as_of']} {r['kind']} call on {r['symbol']}.")
+
+
+alerts_app = typer.Typer(help="Gmail alerts: the daily list, buy triggers, stops, targets and gap-ups.",
+                         no_args_is_help=True)
+app.add_typer(alerts_app, name="alerts")
+
+
+def _alerts_call(fn):
+    try:
+        return fn()
+    except (RuntimeError, ValueError, OSError) as exc:  # smtplib errors are OSError
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+
+
+@alerts_app.command("test")
+def alerts_test():
+    """Send a test mail (checks TA_GMAIL_USER / TA_GMAIL_APP_PASSWORD in .env)."""
+    from tradingagents import alerts
+
+    _alerts_call(lambda: alerts.send_email("TradingAgents test alert", "Gmail alerts are working."))
+    console.print("Test mail sent.")
+
+
+@alerts_app.command("digest")
+def alerts_digest(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print instead of mailing"),
+    refresh: bool = typer.Option(False, "--refresh", help="Download fresh data"),
+):
+    """Run /trade-setup and mail the swing and value tables. Schedule for 18:30 and/or 08:30 IST."""
+    from tradingagents import alerts
+
+    text = _alerts_call(lambda: alerts.digest(dry_run=dry_run, refresh=refresh))
+    print(text if dry_run else "Digest mailed.")
+
+
+@alerts_app.command("status")
+def alerts_status(gaps: bool = typer.Option(False, "--gaps", help="Also list stocks gapping up 6%+ on heavy volume")):
+    """Live snapshot: where each swing/value pick and journal position stands right now."""
+    from tradingagents import alerts
+
+    print(_alerts_call(lambda: alerts.live_status(gaps)))
+
+
+@alerts_app.command("watch")
+def alerts_watch(
+    every: int = typer.Option(5, "--every", help="Minutes between checks"),
+    once: bool = typer.Option(False, "--once", help="Check once and exit (for Task Scheduler)"),
+    gaps: bool = typer.Option(False, "--gaps", help="Also scan every stock for 6%+ gap-ups on heavy volume"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print alerts instead of mailing"),
+):
+    """During market hours: mail buy triggers, do-not-chase, value buy zones, stop/target hits, gap-ups."""
+    from tradingagents import alerts
+
+    n = _alerts_call(lambda: alerts.watch(every, once, gaps, dry_run, log=console.print))
+    console.print(f"{n} alert(s) sent.")
 
 
 def _register_journal():

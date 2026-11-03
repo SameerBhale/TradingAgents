@@ -186,3 +186,28 @@ def fundamentals_snapshot(symbols: list[str], stamp: str, workers: int = 8) -> d
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(cache, fh, default=str)
     return {s: cache.get(s, {}) for s in symbols}
+
+
+def intraday_quotes(symbols: list[str]) -> dict[str, dict]:
+    """Today's open, last price, high and volume from Yahoo's 5-minute bars."""
+    out: dict[str, dict] = {}
+    symbols = sorted(set(symbols))
+    for k in range(0, len(symbols), 150):
+        chunk = symbols[k:k + 150]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            df = yf.download(chunk, period="1d", interval="5m", group_by="ticker", progress=False,
+                             threads=True, auto_adjust=False)
+        if df is None or df.empty:
+            continue
+        for sym in chunk:
+            try:
+                d = df[sym] if len(chunk) > 1 else df
+                d = d.dropna(subset=["Close"])
+            except KeyError:
+                continue
+            if d.empty:
+                continue
+            out[sym] = {"open": float(d["Open"].iloc[0]), "price": float(d["Close"].iloc[-1]),
+                        "high": float(d["High"].max()), "volume": float(d["Volume"].sum())}
+    return out

@@ -16,16 +16,16 @@ from tradingagents.dataflows import india
 from tradingagents.default_config import DEFAULT_CONFIG
 
 GRADE_TEXT = {
-    "A": "A = 52-week breakout, the setup that stayed profitable in both rising and weak markets",
-    "B": "B = setup whose strategy is profitable across NSE over the last 6 and 12 months",
-    "C": "C = setup whose strategy is losing lately: half size or paper trade only",
+    "GOOD": "GOOD = the setup is making money across NSE lately; take it",
+    "OK": "OK = one risk to respect (results, mixed record, weak market); half size",
+    "AVOID": "AVOID = the setup is losing money lately or the news is bad",
 }
-GRADE_STYLE = {"A": "bold green", "B": "yellow", "C": "red"}
-SHORT_SETUP = {"breakout": "BRK", "pivot": "PIV", "pullback": "PB", "rsi2": "RSI2"}
+GRADE_STYLE = {"GOOD": "bold green", "OK": "yellow", "AVOID": "red"}
+SHORT_SETUP = {"breakout": "BRK", "vcp": "VCP", "flag": "FLAG", "ep": "EP", "crossback": "XBK"}
 
 
 def _short_verdict(v: str) -> str:
-    for key, short in (("SKIP", "SKIP"), ("CAUTION", "CAUT"), ("PAPER", "HALF"), ("TAKE", "TAKE")):
+    for key, short in (("GOOD", "GOOD"), ("OK", "HALF"), ("AVOID", "AVOID")):
         if v.startswith(key):
             return short
     return v[:10]
@@ -127,10 +127,9 @@ def _print(r: dict) -> None:
                 f"    Entry {i['entry']:.2f} | Stop {i['stop']:.2f} | Tgt {i['target']:.2f} | "
                 f"R:R {i['rr']:.1f} | Exit {i['exit_by'][5:]} | Qty {i['quantity']}"
             )
-    console.print("  #: rank + grade.  Cap: L large (top 100), M mid (101-250), S small (251-500).  "
-                  "Setup: BRK breakout, PIV pre-breakout pivot, PB pullback, RSI2 dip.  Entry: buy-stop for "
-                  "the next session (RSI2: buy at the open).  Exit: last day to hold (MM-DD).  Call: TAKE, "
-                  "CAUT = caution (results/news), HALF = half size or paper trade, SKIP.")
+    console.print("  #: rank + verdict.  Cap: L large (top 100), M mid (101-250), S small (251-500).  "
+                  "Setup: BRK 52-wk breakout, VCP Minervini, FLAG Qullamaggie flag, EP episodic pivot, XBK Kell crossback.  Entry: buy-stop for "
+                  "the next session.  Exit: last day to hold (MM-DD).  Call: GOOD, HALF = half size, AVOID.")
     for g, text in GRADE_TEXT.items():
         console.print(f"  [{GRADE_STYLE[g]}]{text}[/]")
     for i in r["ideas"]:

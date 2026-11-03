@@ -1,18 +1,23 @@
-"""Best value buys: quality and growth at a fair price, in a sound chart, with concall news.
+"""Value buys (medium and long term): quality growth at a fair price, in a stage-2 uptrend.
 
 NOT backtested: free fundamentals (Yahoo) are a present-day snapshot with no history,
 so this screen has no tested record. It is a shortlist for your own research (and
 for the stock-report skill), not a rule-tested signal like the momentum core.
 
+The method borrows from William O'Neil's CAN SLIM (current and annual earnings growth,
+a leader, institutions buying) and Minervini's SEPA (buy only in a stage-2 uptrend):
+
 Screen (large, mid and small caps, the 250 most traded):
 
-- Chart: above the 200-DMA and the 50-DMA rising, or within 15% of the 52-week
-  high: a value stock the market has started to re-rate, not a falling knife.
+- Chart: Minervini's stage 2 (above the 150 and 200-day averages, the 200-day rising,
+  within 25% of the 52-week high): the market is already re-rating it.
 - Quality: ROE >= 15%, debt/equity <= 100%, operating margin >= 10%.
-- Growth: revenue and earnings growing (latest year on year).
-- Price: P/E below its sector's median among the candidates, PEG <= 1.5.
-- Score: quality + growth + cheapness ranks; the best 5 are shown with a trade
-  plan inside the swing limits (stop 5-10%, target 2R = 10-20%).
+- Growth: revenue and earnings growing. A profit jump over 100% on revenue growth under
+  30% is treated as a one-off (a low base, an other-income gain, a commodity spike) and
+  dropped, as is a cyclical (oil, metals, mining) at a P/E under 8: peak-cycle earnings.
+- Price: P/E at or below its sector's median among the candidates, PEG <= 1.5.
+- Plan (medium term): stop 10-15% below (under the 50-day average), target 2R
+  (20-30%), hold 3-12 months, review on every quarterly result.
 """
 
 from __future__ import annotations
@@ -29,7 +34,8 @@ from tradingagents.dataflows.vendors.yahoo.bulk import fundamentals_snapshot
 from tradingagents.scanner import strategies as S
 from tradingagents.scanner.data import MarketData
 
-STOP_MIN, STOP_MAX, TARGET_R = 5.0, 10.0, 2.0
+STOP_MIN, STOP_MAX, TARGET_R = 10.0, 15.0, 2.0
+CYCLICAL = ("oil", "gas", "metal", "mining", "steel", "coal", "petro", "refin")
 
 
 @dataclass
@@ -71,13 +77,19 @@ def _pct(x):
 
 
 def _pattern(ind: pd.DataFrame) -> str | None:
+    """Stage 2 only: above the 150 and 200-day averages, the 200-day rising, near the high."""
     r = ind.iloc[-1]
-    if r["Close"] > r["sma200"] and r["sma50"] > ind["sma50"].iloc[-20]:
-        near = r["Close"] >= r["high52_incl"] * 0.85
-        return "uptrend, near 52-week high" if near else "uptrend above 200-DMA"
-    if r["Close"] >= r["high52_incl"] * 0.85:
-        return "within 15% of 52-week high"
-    return None
+    stage2 = (
+        r["Close"] > r["sma150"] > r["sma200"] and r["sma200"] > ind["sma200"].iloc[-22]
+        and r["Close"] >= r["high52_incl"] * 0.75
+    )
+    if not stage2:
+        return None
+    if r["Close"] >= r["high52_incl"] * 0.95:
+        return "stage-2 uptrend, at its 52-week high"
+    if r["Close"] > r["sma50"]:
+        return "stage-2 uptrend, above the 50-day"
+    return "stage-2 uptrend, resting at the 50-day"
 
 
 def _concall(name: str) -> list[dict]:
@@ -94,7 +106,7 @@ def _concall(name: str) -> list[dict]:
             for it in own[:4]]
 
 
-def value_picks(md: MarketData, top: int = 5, with_news: bool = True) -> dict:
+def value_picks(md: MarketData, top: int = 3, with_news: bool = True) -> dict:
     rows = []
     for sym, d in md.stocks.items():
         if d.index[-1] != md.nifty.index[-1] or len(d) < 260:
@@ -115,6 +127,11 @@ def value_picks(md: MarketData, top: int = 5, with_news: bool = True) -> dict:
             continue
         if roe < 0.15 or (de is not None and de > 100) or om < 0.10 or rg <= 0 or eg <= 0:
             continue
+        if eg > 1.0 and rg < 0.30:
+            continue  # a one-off profit jump, not growth
+        sector = (india.industry(sym) or f.get("sector") or "").lower()
+        if pe < 8 and any(w in sector for w in CYCLICAL):
+            continue  # a cyclical at peak earnings looks cheap right before it is not
         peg = pe / (eg * 100) if eg > 0 else np.inf
         if peg > 1.5:
             continue
@@ -136,7 +153,7 @@ def value_picks(md: MarketData, top: int = 5, with_news: bool = True) -> dict:
         ind = inds[sym]
         row = ind.iloc[-1]
         entry = round(float(row["Close"]), 2)
-        stop = max(min(entry - 2.5 * float(row["atr"]), entry * (1 - STOP_MIN / 100)), entry * (1 - STOP_MAX / 100))
+        stop = max(min(float(row["sma50"]) * 0.98, entry * (1 - STOP_MIN / 100)), entry * (1 - STOP_MAX / 100))
         risk = entry - stop
         target = entry + TARGET_R * risk
         sec = md.securities.get(sym)
@@ -151,7 +168,7 @@ def value_picks(md: MarketData, top: int = 5, with_news: bool = True) -> dict:
             analysts=f.get("numberOfAnalystOpinions"), pattern=c["pattern"],
             entry=entry, max_entry=round(entry * 1.01, 2), stop=round(stop, 2), target=round(target, 2),
             risk_pct=round(risk / entry * 100, 2), reward_pct=round((target / entry - 1) * 100, 2), rr=TARGET_R,
-            hold="1-3 months; review on each quarterly result (not backtested)", score=round(float(c["score"]), 3),
+            hold="3-12 months; review on each quarterly result", score=round(float(c["score"]), 3),
         )
         p.why = [
             f"ROE {p.roe_pct}%, operating margin {p.op_margin_pct}%, debt/equity {p.debt_equity}%.",
@@ -162,7 +179,7 @@ def value_picks(md: MarketData, top: int = 5, with_news: bool = True) -> dict:
         if p.analyst_target:
             p.why.append(f"Analyst mean target {p.analyst_target} ({p.analysts} analysts).")
         if c["eg"] > 1.0:
-            p.risks.append("Earnings growth over 100%: often a one-off or a low base; check it in the concall.")
+            p.risks.append("Earnings growth over 100% (revenue kept pace, so likely real); confirm in the concall.")
         if p.cap == "Small":
             p.risks.append("Small cap: thinner liquidity and larger swings.")
         p.risks.append("Fundamentals are today's Yahoo snapshot; confirm in the latest results.")

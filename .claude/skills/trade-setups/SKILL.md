@@ -1,112 +1,110 @@
 ---
 name: trade-setups
 description: >-
-  The survival plan's trade list for NSE: the momentum core portfolio, the top 10
-  swing setups (large, mid and small caps and ETFs; stop 5-10%, target 10-20%),
-  and the best value buys (fundamentals plus chart plus concall headlines). Every
-  row has name, ticker, cap, grade with its meaning, entry, stoploss, target, exit,
-  holding time, quantity and an auditor's check. Then a Bull / Bear / Judge debate
-  and an Auditor agent who says whether each call is correct. It sizes positions
-  when the user gives an amount, and records feedback. Free data, no API key. Use
-  for /trade-setups, /trade-setup, "setups", "what to buy", "value buy",
-  "how long to hold", "invest Rs X in swing".
-argument-hint: "[--capital 500000] [--core 80] [--risk 1] [--mode balanced]"
+  NSE trade list in two short tables: the top 5 swing setups (short term; stop
+  5-10%, target 10-20%) from five strategies taken from champion traders
+  (52-week breakout, Minervini VCP, Qullamaggie flag and episodic pivot, Oliver
+  Kell EMA crossback), and the top 3 value buys (medium/long term, 3-12 months;
+  quality growth at a fair price in a stage-2 uptrend, with concall headlines).
+  Every row has name, ticker, cap, entry, stoploss, target, exit, holding time and
+  a plain GOOD / OK / AVOID verdict. No money or quantity. Free data, no API key.
+  Use for /trade-setups, /trade-setup, "setups", "what to buy", "swing setups",
+  "value buy", "how long to hold".
+argument-hint: "[--top 5] [--value 3] [--with-core] [--refresh]"
 ---
 
 # trade-setups
 
-The scanner owns every number. You present them, debate them, audit them and
-answer questions. Never invent or change a price, level, quantity or holding time.
+The scanner owns every number. You present them, add a short Bull / Bear / Judge on
+the best ideas, and answer questions. Never invent or change a price, level or date.
 
 ## 1. Run
 
 ```bash
-tradingagents setups --capital 500000 --core 80 --risk 1 --mode balanced --markdown
+tradingagents setups --markdown
 ```
 
-Pass the user's arguments. `--mode` sets how the core behaves while the Nifty is below
-its 200-DMA: `balanced` (default, half size), `safe` (wait in LIQUIDBEES) or
-`aggressive` (full size). Use `python -m cli.main setups ...` if `tradingagents` is not
-on PATH. The command saves `~/.tradingagents/scans/setups-<date>.json` and logs every
-call for later review.
+(`python -m cli.main setups --markdown` if `tradingagents` is not on PATH.) Defaults:
+top 5 swing, top 3 value. Pass the user's arguments. `--with-core` adds the momentum
+core portfolio only when the user asks for it. Missing Yahoo sessions are filled from
+NSE's bhavcopy (published around 18:00 IST); if the header date is older than the
+last session, say so and re-run with `--refresh` after 18:00.
 
 ## 2. Show
 
-The header and notes first (Yahoo lagging, regime). Then all three tables exactly as
-printed: 1. CORE, 2. SWING, 3. VALUE. Every grade cell carries its meaning; keep it.
-- **A**: 52-week breakout, the tested edge in rising and weak markets; full size.
-- **B**: the strategy is profitable across NSE over the last 6 and 12 months; full size.
-- **C**: the strategy is losing money lately; half size or paper trade.
+The header line and notes, then both tables exactly as printed: **SWING** (short term)
+and **VALUE** (medium to long term). Do not add capital, money, quantity or sizing
+columns, and do not ask how much the user wants to invest.
 
-Auditor statuses: **CORRECT** (no rule broken), **QUESTIONABLE** (check the noted
-risk), **WRONG** (breaks a rule: do not take it).
+Verdicts, in plain words (they replace the old grades and the auditor):
+- **GOOD**: this setup is making money across NSE lately; take it.
+- **OK**: one risk to respect (results inside the hold, a mixed recent record, or the
+  Nifty below its 200-DMA); half size.
+- **AVOID**: the setup is losing money across NSE lately, or the news is bad.
 
-## 3. Debate, then audit
+## 3. Bull / Bear / Judge (short)
 
-For the top 3 swing ideas and the top 2 value buys, read the JSON (`swing.ideas[]`:
-`bull`, `bear`, `news`, `earnings_date`, `audit`; `value.picks[]`: fundamentals,
-`concall`, `why`, `risks`, `audit`):
+For the top 3 swing ideas and the top value buy, read the JSON
+(`~/.tradingagents/scans/setups-<date>.json`: `swing.ideas[]` `bull`, `bear`, `news`,
+`earnings_date`; `value.picks[]` `why`, `risks`, `concall`) and write one line each:
 
-- **Bull** (2 points) and **Bear** (2 points, answering the Bull's best one).
-- **Judge**: TAKE / CAUTION / HALF / SKIP. It can be stricter than the scanner, never looser.
-- **Auditor agent**: a separate check of the call itself. Is the call correct?
-  Answer **AGREE** or **DISAGREE** with the Judge, in one line, after checking: the stop
-  is 5-10% and the target 10-20% (swing); the grade matches the call (no TAKE on C);
-  results are not inside the hold; the news does not contradict the call; for value,
-  the concall headlines support the growth numbers (a one-off profit jump is not
-  growth); and the trade fits the market regime. Name the rule from `docs/STRATEGY.md`
-  that it breaks, if any.
-
-For a deeper look at the best value buy, offer the `stock-report` skill (a full equity
-research report as a PDF), and run it only if the user says yes.
+- **Bull**: the best reason to take it.
+- **Bear**: the best reason not to, answering the Bull.
+- **Judge**: TAKE / HALF / SKIP, never looser than the verdict. Say plainly whether
+  the setup is good or bad *today* and why. For value, check that the concall
+  headlines support the growth (a one-off profit jump is not growth).
 
 ## 4. Close: what to do now
 
-1. Core: BUY / HOLD / SELL as listed at the next open on review day (`core.review_on`) or
-   when you first start. Otherwise hold, and check the -15% stops.
-2. Swing: an SL buy order (trigger = entry, limit = max) before 09:15 IST; after the fill,
-   a GTT OCO with the stop and the target. Skip anything the Auditor marked WRONG.
-3. Value: a limit buy at or below the entry shown, with the stop and target as a GTT OCO;
-   review on the next quarterly result.
-4. Then ask: "How much do you want to invest, and in which list (swing, core or value)?"
+1. Swing: a stop-limit buy (trigger = "buy above", limit = max) before 09:15 IST; after
+   the fill, a GTT OCO with the stoploss and target. Breakouts: selling on a close below
+   the 20-day EMA tested better than the fixed target (see docs/STRATEGY.md); the
+   target stays the default. Skip anything marked AVOID.
+2. Value: a limit buy at or below the price shown, stoploss and target as a GTT OCO;
+   review on every quarterly result.
+3. Offer `stock-report` (a full PDF) for the top value buy; run it only on a yes.
 
-## 5. When the user gives an amount
+## 5. Holding time
 
-"Rs 1,00,000 for swing" (or core, or value, optionally "only 1, 3 and 5"):
+- **Swing**: the row's Hold (median sessions from the strategy's own trades) and its
+  sell-by date; the limit is 20 sessions.
+- **Value**: 3-12 months, reviewed on each quarterly result. Not backtested; say so.
+- **A journal position**: `tradingagents journal list`, then the matching rule.
+
+## 6. Live market questions
+
+When the user asks for live updates ("what's happening now", "did PAYTM trigger",
+"live", "update"), run:
 
 ```bash
-tradingagents allocate --amount 100000 --for swing --markdown            # every call except WRONG
-tradingagents allocate --amount 100000 --for swing --picks 1,3,5 --markdown
+tradingagents alerts status          # add --gaps for today's gap-ups across NSE
 ```
 
-Show the table: quantity, capital, max loss per stock, cash left, and the loss if every
-stop hits. Remind them to log fills with `/trade-journal`.
+Show the table, then one line per pick that changed: TRIGGERED (buy is in), RAN PAST MAX
+(do not chase), STOPLOSS / TARGET HIT, value IN BUY ZONE. Never re-run the full scan
+during market hours to make new swing setups: setups come from a settled close.
 
-## 6. Holding-time questions
+## 7. Alerts (Gmail)
 
-- **Core momentum**: hold while it ranks in the top 40 at each month-end review, and sell
-  on the -15% stop. The median hold in testing was 62 days (half lasted 31-124 days).
-- **Swing**: give the setup's `hold` and `exit_by`, plus `swing.records[<strategy>].all`
-  (`median_days`, `median_days_to_target`, `p75_days`). The limit is 20 sessions (10 for RSI(2)).
-- **Value**: 1-3 months, reviewed on each quarterly result. This hold is not backtested; say so.
-- **A position in the journal**: `tradingagents journal list`, then apply the matching rule.
+If the user asks for alerts: `tradingagents alerts test`, `alerts digest` (mail the
+list) and `alerts watch --gaps` (live buy triggers, do-not-chase, value buy zone,
+stop/target hits, gap-ups during market hours). Setup is in
+`tradingagents/alerts.py`; `scripts/register_alerts.ps1` schedules them on Windows.
 
-## 7. Feedback: how the bot gets better
+## 8. Feedback
 
-When the user says a call was good or bad, or why:
+When the user says a call was good or bad:
 
 ```bash
 tradingagents calls feedback DIVISLAB "results gap hit the stop" --bad
-tradingagents calls review                    # how past calls played out, by grade / strategy / auditor
+tradingagents calls review     # how past calls played out, by verdict and strategy
 ```
 
-Run `calls review` when asked "how good are your calls?". Report the hit rate and the
-average return by grade and auditor status, and suggest a rule change only when a group
-has 20 or more closed calls.
+Suggest a rule change only when a group has 20 or more closed calls.
 
 ## Rules
 
-- Never say "sure", "guaranteed" or "multibagger". In testing, the momentum core
-  returned +14-15% a year with a ~-20% worst drop (Nifty: +11.3% / -38%). The value
-  screen is not backtested. Say so when it matters.
+- Never say "sure", "guaranteed" or "multibagger". Champion returns (Kell +941%,
+  Minervini +155%) came from concentration, leverage and discretion; the mechanical
+  versions here earn a small edge per trade (docs/STRATEGY.md).
 - Not investment advice; the user places every order.

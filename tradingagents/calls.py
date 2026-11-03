@@ -3,8 +3,8 @@
 Each `setups` run appends its calls to ``~/.tradingagents/calls.jsonl`` (once per
 date, symbol and kind). ``review`` replays each swing/value call on the prices
 that followed (same mechanics as the backtest: buy-stop or buy at the next open,
-stop, target, time exit) and summarizes the hit rate by grade, strategy, verdict
-and audit status. ``feedback`` attaches your notes. Together they show which calls
+stop, target, time exit) and summarizes the hit rate by verdict and strategy.
+``feedback`` attaches your notes. Together they show which calls
 deserve more trust, and which need a rule change.
 """
 
@@ -51,18 +51,16 @@ def record(setups: dict, path: str | None = None) -> int:
         new.append({"as_of": as_of, "kind": "swing", "symbol": i["symbol"], "strategy": i["strategy"],
                     "grade": i["grade"], "cap": i["cap"], "entry_type": i["entry_type"], "entry": i["entry"],
                     "stop": i["stop"], "target": i["target"], "hold_sessions": i["hold_sessions"],
-                    "verdict": i["verdict"], "audit": i.get("audit", {}).get("status")})
+                    "verdict": i["verdict"]})
     for v in setups.get("value", {}).get("picks", []):
         new.append({"as_of": as_of, "kind": "value", "symbol": v["symbol"], "strategy": "value", "grade": "V",
                     "cap": v["cap"], "entry_type": "open", "entry": v["entry"], "stop": v["stop"],
-                    "target": v["target"], "hold_sessions": 60, "verdict": "VALUE",
-                    "audit": v.get("audit", {}).get("status")})
-    for p in setups["core"]["picks"]:
+                    "target": v["target"], "hold_sessions": 120, "verdict": v.get("verdict", "VALUE")})
+    for p in setups.get("core", {}).get("picks", []):
         if p["action"].startswith(("BUY", "WAIT")):
             new.append({"as_of": as_of, "kind": "core", "symbol": p["symbol"], "strategy": "momentum",
                         "grade": "M", "cap": p["cap"], "entry_type": "open", "entry": p["close"],
-                        "stop": p["stop"], "target": None, "hold_sessions": 63, "verdict": p["action"],
-                        "audit": p.get("audit", {}).get("status")})
+                        "stop": p["stop"], "target": None, "hold_sessions": 63, "verdict": p["action"]})
     added = [r for r in new if (r["as_of"], r["symbol"], r["kind"]) not in seen]
     if added:
         _save(rows + added, path)
@@ -137,7 +135,7 @@ def review(bars_by_symbol: dict[str, pd.DataFrame], path: str | None = None) -> 
         "win_rate": round(float((closed["ret_pct"] > 0).mean() * 100), 1) if not closed.empty else None,
         "avg_ret_pct": round(float(closed["ret_pct"].mean()), 2) if not closed.empty else None,
         "by_kind": group("kind"), "by_grade": group("grade"), "by_strategy": group("strategy"),
-        "by_audit": group("audit"), "by_verdict": group("verdict"),
+        "by_verdict": group("verdict"),
         "feedback": [r for r in out if r.get("feedback")],
         "rows": out,
     }

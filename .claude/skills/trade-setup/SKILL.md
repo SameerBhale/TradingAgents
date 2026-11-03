@@ -1,10 +1,10 @@
 ---
 name: trade-setup
 description: >-
-  Alias of /trade-setups: the NSE momentum core portfolio plus the top 10 swing
-  setups with entry, stoploss, target, exit, holding time and cap class. Use when
-  the user types /trade-setup.
-argument-hint: "[--capital 500000] [--core 80] [--risk 1]"
+  Alias of /trade-setups: the top 5 NSE swing setups (short term) and the top 3
+  value buys (medium/long term) with entry, stoploss, target, exit, holding time,
+  cap and a plain GOOD / OK / AVOID verdict. Use when the user types /trade-setup.
+argument-hint: "[--top 5] [--value 3] [--with-core] [--refresh]"
 ---
 
 # trade-setup

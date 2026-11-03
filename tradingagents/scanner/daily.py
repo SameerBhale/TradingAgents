@@ -1,17 +1,19 @@
-"""The daily top-10: every NSE setup from four strategies, graded, planned and argued.
+"""The daily swing list: every NSE setup from five strategies, judged, planned and argued.
 
     from tradingagents.scanner.daily import run_daily
     result = run_daily(capital=500_000, risk_pct=1.0, top=10)
 
-Grades (from testing on every NSE stock since 2022, see docs/breakout_research.md):
+Verdicts (the ``grade`` field), in plain words:
 
-- **A**: a 52-week breakout. The only setup that stayed profitable after costs in
-  both the 2022-24 rising market and the weak 2024-26 market.
-- **B**: a pivot, pullback or RSI(2) setup whose strategy is profitable over its
-  own last 6 months of trades across the market. These worked in rising markets
-  and lost in weak ones, so they are traded only while their live record is positive.
-- **C**: the same setups while their strategy's last 6 months are negative: shown to
-  fill the list and for learning, at half size or as paper trades only.
+- **GOOD**: the strategy is making money across NSE lately (last 12 months and last
+  6 months positive per trade), results are not inside the hold, the news is clean.
+- **OK**: one thing is off (results inside the hold, a mixed recent record, or a weak
+  market): take half size.
+- **AVOID**: the strategy is losing money across NSE lately, or the news is bad.
+
+10-year test (2017-2026, docs/STRATEGY.md): only the 52-week breakout made money in
+every period; the VCP, flag, crossback and episodic pivot worked in rising markets and
+lost in the weak 2024-26 one. So the verdict follows each strategy's live record.
 
 Micro caps (below the Nifty Smallcap 250) are excluded: they lost money on every
 strategy in the weak market.
@@ -37,12 +39,13 @@ from tradingagents.scanner import engine as E, strategies as S
 
 NIFTY = "^NSEI"
 ALLOWED_CAPS = ("Large", "Mid", "Small")
-GRADE_ORDER = {"A": 0, "B": 1, "C": 2}
+GRADE_ORDER = {"GOOD": 0, "OK": 1, "AVOID": 2}
 GRADE_MEANING = {
-    "A": "A: 52-week breakout, tested edge in rising and weak markets; full size",
-    "B": "B: strategy profitable across NSE over the last 6 and 12 months; full size",
-    "C": "C: strategy losing money lately; half size or paper trade",
+    "GOOD": "GOOD: setup is working across NSE lately; take it",
+    "OK": "OK: one risk to respect; half size",
+    "AVOID": "AVOID: this setup is losing money lately or the news is bad",
 }
+RECORDS_VERSION = "v2"  # bump when the strategies change, so their records are recomputed
 SWING_TARGET_BAND = (10.0, 20.0)
 
 # Whole-word / phrase matches in headlines (case-insensitive). Crude by design:
@@ -96,7 +99,6 @@ class Idea:
     earnings_in_window: bool
     hold: str = ""
     grade_meaning: str = ""
-    audit: dict = field(default_factory=dict)
     news: list[dict] = field(default_factory=list)
     news_flag: str = "none found"
     bull: list[str] = field(default_factory=list)
@@ -144,7 +146,7 @@ def _records(inds, market, stamp: str) -> dict:
     """Each strategy's record over every allowed stock: since 2022, 12 and 6 months."""
     folder = os.path.join(get_config()["data_cache_dir"], "bulk")
     os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, f"records-{stamp}.json")
+    path = os.path.join(folder, f"records-{RECORDS_VERSION}-{stamp}.json")
     if os.path.exists(path):
         try:
             with open(path, encoding="utf-8") as fh:
@@ -172,14 +174,19 @@ def _records(inds, market, stamp: str) -> dict:
 
 
 def _grade(strategy: str, rec: dict) -> str:
-    if strategy == "breakout":
-        return "A"
+    """The strategy's standing from its live record across NSE: GOOD, OK or AVOID."""
     six, year = rec.get("6m", {}), rec.get("12m", {})
-    working = (
-        six.get("trades", 0) >= 20 and six.get("expectancy_r", -1) >= 0.05
-        and year.get("trades", 0) >= 40 and year.get("expectancy_r", -1) > 0
-    )
-    return "B" if working else "C"
+    y = year.get("expectancy_r", -1) if year.get("trades", 0) >= 30 else -1
+    h = six.get("expectancy_r", -1) if six.get("trades", 0) >= 15 else -1
+    if y > 0 and h >= 0:
+        return "GOOD"
+    if y > 0 or h > 0 or strategy == "breakout":  # breakouts held up in every tested period
+        return "OK"
+    return "AVOID"
+
+
+def _demote(grade: str) -> str:
+    return {"GOOD": "OK", "OK": "AVOID"}.get(grade, grade)
 
 
 def _news(idea: Idea, days: int = 10) -> None:
@@ -212,15 +219,18 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
     if idea.strategy == "breakout":
         bull.append(f"New 52-week high on {row['Volume'] / row['vol50']:.1f}x average volume out of a "
                     f"{row['base_pct']:.0f}% base: buyers absorbed all supply from the past year.")
-    elif idea.strategy == "pivot":
-        bull.append(f"Coiling {(1 - row['Close'] / row['high52_incl']) * 100:.1f}% under its 52-week high in a "
-                    f"{row['base_pct']:.0f}% base with volume drying up; the buy-stop fills only on a breakout.")
-    elif idea.strategy == "pullback":
-        bull.append("Uptrend intact (above 50 and 200-DMA); the dip to the 20-DMA was bought with a "
-                    "close above the prior day's high.")
+    elif idea.strategy == "vcp":
+        bull.append(f"Minervini VCP: base tightened {row['c1']:.0f}% -> {row['c2']:.0f}% -> {row['c3']:.0f}% with "
+                    f"volume drying up; passes all 8 Trend Template points (RS rank {row['rs_rank']:.0f}).")
+    elif idea.strategy == "flag":
+        bull.append(f"Qullamaggie flag: ran {row['run_pct']:.0f}% in 1-3 months, now a {row['c3']:.0f}% flag riding "
+                    f"the rising 10/20-day averages (ADR {row['adr_pct']:.1f}%).")
+    elif idea.strategy == "ep":
+        bull.append(f"Episodic pivot: gapped {row['gap_pct']:.1f}% and closed {row['day_pct']:+.1f}% on "
+                    f"{row['Volume'] / row['vol50']:.1f}x average volume: big news, big buyers.")
     else:
-        bull.append(f"Short-term washout (RSI(2) {row['rsi2']:.0f}) inside a long-term uptrend; such dips "
-                    "usually snap back to the 5-DMA within days.")
+        bull.append(f"Kell EMA crossback: a stage-2 leader (RS rank {row['rs_rank']:.0f}) dipped to its 20 EMA "
+                    "and closed back above the 10 EMA and the prior day's high.")
     if rs > 0:
         bull.append(f"Outperformed the Nifty by {rs:.0f} pts over 6 months.")
     else:
@@ -233,11 +243,11 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
         bull.append("Large cap: deep liquidity, tight spreads, stop fills close to the price.")
     elif idea.cap == "Small":
         bear.append("Small cap: wider swings and gap risk; the stop can fill worse than planned.")
-    six = rec.get("6m", {})
-    if six.get("trades"):
-        line = (f"{S.LABELS[idea.strategy]} across NSE, last 6 months: {six['trades']} trades, "
-                f"{six['win_rate']:.0f}% won, {six['expectancy_r']:+.2f}R per trade.")
-        (bull if six["expectancy_r"] > 0 else bear).append(line)
+    year = rec.get("12m", {})
+    if year.get("trades"):
+        line = (f"{S.LABELS[idea.strategy]} across NSE, last 12 months: {year['trades']} trades, "
+                f"{year['win_rate']:.0f}% won, {year['expectancy_r']:+.2f}R per trade.")
+        (bull if year["expectancy_r"] > 0 else bear).append(line)
     if market_row["nifty"] < market_row["nifty_sma200"]:
         bear.append("Nifty is below its 200-DMA: a weak tape where breakouts fail more often.")
     if market_row["breadth"] < 40:
@@ -248,19 +258,32 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
         bear.append(f"Headlines carry warning words ({idea.news_flag[10:]}). Read them before buying.")
     elif idea.news_flag.startswith("positive"):
         bull.append(f"Headlines supportive ({idea.news_flag[10:]}).")
-    if idea.grade == "C":
-        bear.append("Its strategy is losing money across the market lately: half size or paper trade.")
     idea.bull, idea.bear = bull, bear
+    # The verdict, in one plain sentence.
+    grade = _grade(idea.strategy, rec)
+    reasons = []
     if idea.news_flag.startswith("negative"):
-        idea.verdict = "SKIP unless the news checks out"
-    elif idea.grade == "A" and not idea.earnings_in_window:
-        idea.verdict = "TAKE (best-tested setup)"
-    elif idea.grade == "C":
-        idea.verdict = "PAPER / HALF SIZE"
-    elif idea.earnings_in_window:
-        idea.verdict = "CAUTION: results inside the hold"
+        grade, reasons = "AVOID", [f"bad headlines ({idea.news_flag[10:]})"]
     else:
-        idea.verdict = "TAKE at normal size" if idea.grade == "B" else "TAKE"
+        if grade == "AVOID":
+            reasons.append("this setup has lost money across NSE over the last 6-12 months")
+        elif grade == "OK" and idea.strategy != "breakout":
+            reasons.append("this setup's recent record is mixed")
+        if idea.earnings_in_window:
+            grade = _demote(grade) if grade == "GOOD" else grade
+            reasons.append(f"results on {idea.earnings_date} fall inside the hold (gap risk)")
+        if market_row["nifty"] < market_row["nifty_sma200"] and grade == "GOOD":
+            grade = "OK"
+            reasons.append("Nifty is still below its 200-DMA")
+    idea.grade, idea.grade_meaning = grade, GRADE_MEANING[grade]
+    if grade == "GOOD":
+        why = {"breakout": "the best-tested setup (made money in every period since 2017)"}.get(
+            idea.strategy, "this setup is making money across NSE lately")
+        idea.verdict = f"GOOD: {why}" + (f"; {'; '.join(reasons)}" if reasons else "")
+    elif grade == "OK":
+        idea.verdict = "OK, half size: " + ("; ".join(reasons) or "one risk to respect")
+    else:
+        idea.verdict = "AVOID: " + "; ".join(reasons)
 
 
 def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
@@ -274,6 +297,7 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
     nifty = md.nifty
     market = E.market_frame(nifty, md.stocks)
     inds = {s: S.indicators(d) for s, d in md.stocks.items()}
+    S.add_rs_rank(inds)
     records = _records(inds, market, f"{md.last.isoformat()}-{len(inds)}")
     inds.update({s: S.indicators(d) for s, d in md.etfs.items()})
     day = market.index[-1]
@@ -292,12 +316,12 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
             if s is None or s.entry <= s.stop:
                 continue
             grade = _grade(name, records[name])
-            factor = 0.5 if grade == "C" else 1.0
+            factor = 1.0 if grade == "GOOD" else 0.5
             target = s.target if s.target is not None else s.entry
             reward = target - s.entry
             rr = reward / (s.entry - s.stop) if reward > 0 else 0.0
             if not SWING_TARGET_BAND[0] - 0.05 <= reward / s.entry * 100 <= SWING_TARGET_BAND[1] + 0.05:
-                continue  # outside the 10-20% target band (e.g. RSI(2) snap-backs)
+                continue  # outside the 10-20% target band
             qty = _size(capital, risk_pct, s.entry, s.stop, factor)
             sec = universe[sym]
             is_etf = sym in md.etfs
@@ -313,14 +337,16 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
                 hold_sessions=s.max_hold, exit_by=str(_trading_days_after(day.date(), s.max_hold)),
                 quantity=qty, capital_needed=round(qty * s.entry, 0),
                 max_loss=round(qty * (s.entry - s.stop), 0),
-                size_note="half size (strategy not working lately)" if factor < 1 else "full size",
+                size_note="half size" if factor < 1 else "full size",
                 earnings_date=None, earnings_in_window=False,
                 hold=hold_text(name, records[name], s.max_hold), grade_meaning=GRADE_MEANING[grade],
             )
-            six = records[name].get("6m", {})
+            year = records[name].get("12m", {})
+            rs = row.get("rs_rank")
             idea.score = (
                 -GRADE_ORDER[grade] * 10
-                + (six.get("expectancy_r", 0) or 0) * 5
+                + (year.get("expectancy_r", 0) or 0) * 5
+                + (0 if rs is None or rs != rs else (rs - 50) / 50)   # leaders first
                 - idea.risk_pct * 0.2
                 + min(rr, 3) * 0.3
                 + {"Large": 0.3, "Mid": 0.2, "Small": 0.0, "ETF": 0.3}.get(idea.cap, 0.0)
@@ -347,11 +373,9 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
     with cf.ThreadPoolExecutor(max_workers=8) as pool:
         shortlist = list(pool.map(enrich, shortlist))
     for idea, row in shortlist:
-        if idea.news_flag.startswith("negative"):
-            idea.score -= 3
-        if idea.earnings_in_window:
-            idea.score -= 1
+        before = GRADE_ORDER[idea.grade]
         _debate(idea, row, mrow, records[idea.strategy])
+        idea.score -= (GRADE_ORDER[idea.grade] - before) * 10 + (1 if idea.earnings_in_window else 0)
     shortlist.sort(key=lambda x: x[0].score, reverse=True)
     ideas = [i for i, _ in shortlist[:top]]
     for n, idea in enumerate(ideas, 1):
@@ -365,21 +389,16 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
             f"are from the {day.date()} close. Re-run in a while (add --refresh) for the {last} close."
         )
     if not regime:
-        notes.append("Nifty is below its 50-DMA: breakout, pivot and pullback setups are switched off; "
-                      "only RSI(2) dips can appear. Trade small or stay out.")
-    if not any(i.grade == "A" for i in ideas):
-        notes.append("No grade-A breakout today. Grade B/C ideas are weaker: their strategies lost money "
-                     "in the weak 2024-26 market. Prefer half size or paper trades.")
+        notes.append("Nifty is below its 50-DMA: breakout, VCP, flag and crossback setups are switched off; "
+                      "only episodic pivots (news gaps) can appear. Trade small or stay out.")
+    if not any(i.grade == "GOOD" for i in ideas):
+        notes.append("No GOOD setup today: every candidate carries at least one risk. Half size, or wait.")
     market_state = {
         "nifty": round(float(mrow["nifty"]), 2), "nifty_sma50": round(float(mrow["nifty_sma50"]), 2),
         "nifty_sma200": round(float(mrow["nifty_sma200"]), 2),
         "nifty_ret_6m_pct": round(float(mrow["nifty_ret126"]) * 100, 1),
         "breadth_pct": round(float(mrow["breadth"]), 1), "filter_on": regime,
     }
-    from tradingagents.scanner.audit import audit_swing
-
-    for i in ideas:
-        i.audit = audit_swing(asdict(i), market_state)
     return json.loads(json.dumps({
         "as_of": str(day.date()),
         "market": market_state,
