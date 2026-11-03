@@ -183,10 +183,11 @@ def breakout(
     from cli.breakout import breakout_command
 
     try:
-        raise typer.Exit(code=breakout_command(capital, risk, top, date, refresh, as_json, deep))
+        code = breakout_command(capital, risk, top, date, refresh, as_json, deep)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
+    raise typer.Exit(code=code)
 
 
 @app.command()
@@ -207,10 +208,11 @@ def scan(
     from cli.scan import scan_command
 
     try:
-        raise typer.Exit(code=scan_command(capital, risk, top, date, refresh, as_json, no_news))
+        code = scan_command(capital, risk, top, date, refresh, as_json, no_news)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
+    raise typer.Exit(code=code)
 
 
 @app.command()
@@ -233,10 +235,11 @@ def setups(
     from cli.setups import setups_command
 
     try:
-        raise typer.Exit(code=setups_command(capital, core, risk, top, refresh, as_json, markdown, no_news))
+        code = setups_command(capital, core, risk, top, refresh, as_json, markdown, no_news)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
+    raise typer.Exit(code=code)
 
 
 def _register_journal():
