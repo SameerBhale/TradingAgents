@@ -81,23 +81,66 @@ exit did not rescue the other setups in 2024-26.
 Neither a market filter (Nifty above its 200-DMA with 50%+ breadth) nor a strict RS rank
 >= 90 fixed the weak period: the few "healthy" days in 2024-26 were near the top.
 
+**2026-11-04 retest: no time limit, trader-style exits** (same data, all five setups,
+large/mid/small caps, R per trade after costs; win % in brackets):
+
+| Exit | 2017-21 | 2022-Jun 24 | Jul 24-26 | all |
+|---|---|---|---|---|
+| 2R target or sell after 20 sessions (old) | +0.11R | +0.18R | -0.04R | +0.09R (45%) |
+| 2R target, no time limit | +0.21R | +0.31R | -0.04R | +0.17R (40%) |
+| close below the 20-day EMA (no target) | +0.19R | +0.28R | -0.05R | +0.15R (32%) |
+| close below the 10-day EMA | +0.11R | +0.10R | -0.04R | +0.06R (34%) |
+| **half at 2R, stop to cost, rest on a 20-EMA close (chosen)** | **+0.28R** | **+0.44R** | -0.06R | **+0.23R (40%)** |
+
+The chosen exit is how Qullamaggie and Minervini sell: take part of the gain at the
+target, then let the rest run on a moving average. It keeps your 10-20% target and
+removes the calendar. Typical hold: 22-34 sessions; the target half fills in about 18.
+
+**Follow the money: NSE delivery %.** NSE publishes the delivered share of each stock's
+volume every day (the MTO file, free, back to 2016). Funds buy for delivery; intraday
+traders square off. dp_trend = the 20-day average delivery % / the 100-day average.
+All five setups, half-at-target exit:
+
+| dp_trend on the signal day | 2017-21 | 2022-Jun 24 | Jul 24-26 | last 12m | all |
+|---|---|---|---|---|---|
+| any (no filter) | +0.28R | +0.44R | -0.06R | -0.09R | +0.23R (6,801) |
+| >= 1.00 | +0.39R | +0.52R | -0.02R | -0.06R | +0.30R |
+| **>= 1.05 (money IN)** | **+0.42R** | **+0.58R** | **+0.04R** | -0.08R | **+0.36R (1,906)** |
+| >= 1.08 | +0.40R | +0.61R | +0.14R | +0.20R | +0.40R (1,329) |
+
+Every step up in the threshold was better in every period, so the effect is not one
+lucky setting. It helps breakouts, VCPs and crossbacks most; it does not help episodic
+pivots (news days are full of intraday churn), so they are exempt. Price-only "money
+flow" proxies (O'Neil up/down volume, volume surge) showed no consistent effect.
+
+**Universe**: liquid micro caps (price >= Rs 100, turnover >= Rs 10 crore) lost on the
+same rules (-0.01R overall, -0.20R in 2024-26; the most traded micro caps -0.65R), so
+the scan stays on the top 500 by market cap (Large, Mid, Small), about 475 with history.
+
+**Bulk/block deals**: NSE serves only the current day freely, so they cannot be tested.
+They are shown as a note; an institution selling in one demotes GOOD to OK.
+
 What this means:
 
 11. **Stoploss 5-10%, target 10-20%** (2R). Setups outside the band are dropped.
+11b. **Money flow**: money OUT (dp_trend < 1.00) drops the setup; flat (1.00-1.05) is OK
+    at best; only money IN (>= 1.05) can be GOOD. Episodic pivots are exempt. The setup
+    records behind the verdict count money-IN trades only.
 11a. **The verdict follows each setup's live record across NSE** (recomputed every run):
-    GOOD when its last 12 and 6 months are positive per trade; OK (half size) when one
-    is, or for breakouts (positive in every tested period); AVOID when both are negative.
+    GOOD when its last 12 and 6 months are positive per trade (30 and 15 trades at least);
+    OK (half size) when one is, when there are too few recent trades, or for breakouts
+    (positive in every tested period); AVOID when both are negative.
     A GOOD setup drops to OK when results fall inside the hold or the Nifty is below its
     200-DMA; bad headlines make it AVOID.
 12. **Risk about 1% of the swing money per trade** (0.5% on OK), at most 25% in one stock.
 13. **Entry**: a stop-limit buy with trigger = "buy above" and limit = max, for the next
     session only.
-14. **Exit**: stop and target in a GTT OCO right after the fill; if neither hits, sell on the
-    sell-by date (20 sessions). For breakouts, a close below the 20-day EMA is the
-    better-tested exit.
-15. **Holding time**: the row's Hold is the median of the setup's own trades (breakouts
-    about 12-15 sessions, VCP about 15, flags and crossbacks about 12-13).
-16. Results date inside the hold: halve the size, or sell before the results.
+14. **Exit, no time limit**: right after the fill, a GTT OCO with the stoploss and the
+    target for **half** the shares. When the target fills, move the stop on the other half
+    to your buy price; sell it at the next open after a close below the 20-day EMA.
+15. **Holding time**: the row's Hold is the median of the setup's own trades (about 22-26
+    sessions; the target half fills in about 18). There is no sell-by date.
+16. Results date inside the typical hold: halve the size, or sell before the results.
 
 Champion returns of several hundred percent came from concentrated, often leveraged,
 discretionary trading, with a few huge winners ridden for months. The mechanical

@@ -93,7 +93,7 @@ def test_calls_record_dedupe_feedback_and_review(tmp_path):
     assert calls.record(setups, path) == 2
     assert calls.record(setups, path) == 0  # same day, same calls: not logged twice
     calls.feedback("AAA", "entry was late", "bad", path=path)
-    rep = calls.review({"AAA.NS": _bars([100, 102, 105, 108, 112] + [112] * 20),
+    rep = calls.review({"AAA.NS": _bars([100, 102, 105, 108, 112] + [112] * 10 + [104] * 10),
                         "BBB.NS": _bars([50] * 30)}, path)
     assert rep["calls"] == 2
     assert rep["by_grade"]["A"]["win_rate"] == 100

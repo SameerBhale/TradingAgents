@@ -60,7 +60,7 @@ def render_markdown(r: dict) -> str:
         f"{r['scanned']} large/mid/small caps scanned, {r['candidates']} setups found. "
         f"Capital {_inr(r['capital'])}, risk {r['risk_pct']}% per trade.",
         "",
-        "| # | Grade | Stock | Cap | Sector | Setup | Entry | Stoploss | Target / exit | R:R | Exit by | Qty | Capital | Max loss | Verdict |",
+        "| # | Grade | Stock | Cap | Sector | Setup | Entry | Stoploss | Target / exit | R:R | Exit | Qty | Capital | Max loss | Verdict |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i in r["ideas"]:
@@ -75,7 +75,7 @@ def render_markdown(r: dict) -> str:
         lines += [
             f"## {i['rank']}. {i['symbol'].removesuffix('.NS')} - {i['name']} ({i['cap']} cap, grade {i['grade']})",
             f"- **Plan**: {_entry_text(i)}; stop {i['stop']:,.2f}; exit: {i['exit_rule']} "
-            f"(target {i['target']:,.2f}); hold up to {i['hold_sessions']} sessions, exit by {i['exit_by']}. "
+            f"(target {i['target']:,.2f}); no time limit. "
             f"Size: {i['quantity']} shares ({i['size_note']}).",
             "- **Bull agent**: " + " ".join(i["bull"]),
             "- **Bear agent**: " + (" ".join(i["bear"]) or "No material objection found."),
@@ -112,7 +112,7 @@ def _print(r: dict) -> None:
         t.add_row(
             f"[{GRADE_STYLE[i['grade']]}]{i['rank']}{i['grade']}[/]", i["symbol"].removesuffix(".NS")[:10],
             i["cap"][0], SHORT_SETUP[i["strategy"]], f"{i['entry']:.2f}", f"{i['stop']:.2f}", f"{i['target']:.2f}",
-            f"{i['rr']:.1f}", i["exit_by"][5:], str(i["quantity"]), _short_verdict(i["verdict"]),
+            f"{i['rr']:.1f}", "trail", str(i["quantity"]), _short_verdict(i["verdict"]),
         )
     if console.width >= 110:
         console.print(t)
@@ -125,18 +125,18 @@ def _print(r: dict) -> None:
             )
             console.print(
                 f"    Entry {i['entry']:.2f} | Stop {i['stop']:.2f} | Tgt {i['target']:.2f} | "
-                f"R:R {i['rr']:.1f} | Exit {i['exit_by'][5:]} | Qty {i['quantity']}"
+                f"R:R {i['rr']:.1f} | Exit {'trail'} | Qty {i['quantity']}"
             )
     console.print("  #: rank + verdict.  Cap: L large (top 100), M mid (101-250), S small (251-500).  "
                   "Setup: BRK 52-wk breakout, VCP Minervini, FLAG Qullamaggie flag, EP episodic pivot, XBK Kell crossback.  Entry: buy-stop for "
-                  "the next session.  Exit: last day to hold (MM-DD).  Call: GOOD, HALF = half size, AVOID.")
+                  "the next session.  Exit: half at target, rest on a 20-EMA close.  Call: GOOD, HALF = half size, AVOID.")
     for g, text in GRADE_TEXT.items():
         console.print(f"  [{GRADE_STYLE[g]}]{text}[/]")
     for i in r["ideas"]:
         body = (
             f"[bold]Plan[/bold]  {_entry_text(i)}  |  stop {_inr(i['stop'])} (-{i['risk_pct']:.1f}%)  |  "
             f"target {_inr(i['target'])} (+{i['reward_pct']:.1f}%)  |  R:R {i['rr']:.1f}\n"
-            f"[bold]Exit[/bold]  {i['exit_rule']}; exit by {i['exit_by']}\n"
+            f"[bold]Exit[/bold]  {i['exit_rule']}; no time limit\n"
             f"[bold]Size[/bold]  {i['quantity']} shares = {_inr(i['capital_needed'])}, max loss ~{_inr(i['max_loss'])} "
             f"({i['size_note']})\n"
             f"[green]Bull:[/green] {' '.join(i['bull'])}\n"

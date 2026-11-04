@@ -6,10 +6,14 @@
 Verdicts (the ``grade`` field), in plain words:
 
 - **GOOD**: the strategy is making money across NSE lately (last 12 months and last
-  6 months positive per trade), results are not inside the hold, the news is clean.
-- **OK**: one thing is off (results inside the hold, a mixed recent record, or a weak
-  market): take half size.
+  6 months positive per trade, counting only money-IN trades), money is flowing in
+  (delivery % rising), results are not near, the news is clean.
+- **OK**: one thing is off (money flow flat, results near, a mixed recent record, an
+  institution selling in a bulk/block deal, or a weak market): take half size.
 - **AVOID**: the strategy is losing money across NSE lately, or the news is bad.
+
+Money OUT (delivery % falling under its 100-day average) drops the setup altogether.
+The exit has no time limit: half at the target, the rest on a close below the 20 EMA.
 
 10-year test (2017-2026, docs/STRATEGY.md): only the 52-week breakout made money in
 every period; the VCP, flag, crossback and episodic pivot worked in rising markets and
@@ -33,7 +37,7 @@ import pandas as pd
 
 from tradingagents.dataflows import india
 from tradingagents.dataflows.config import get_config
-from tradingagents.dataflows.vendors import google_news
+from tradingagents.dataflows.vendors import google_news, nse_delivery
 from tradingagents.dataflows.vendors.yahoo.bulk import next_earnings_date
 from tradingagents.scanner import engine as E, strategies as S
 
@@ -45,8 +49,16 @@ GRADE_MEANING = {
     "OK": "OK: one risk to respect; half size",
     "AVOID": "AVOID: this setup is losing money lately or the news is bad",
 }
-RECORDS_VERSION = "v2"  # bump when the strategies change, so their records are recomputed
+RECORDS_VERSION = "v3"  # bump when the strategies change, so their records are recomputed
 SWING_TARGET_BAND = (10.0, 20.0)
+RECORDS_START = pd.Timestamp("2022-01-01")
+EXIT_SHORT = "half at target, rest on 20-EMA close"
+MONEY_TEXT = {
+    "in": "IN (delivery % rising: funds accumulating)",
+    "flat": "flat (delivery % not rising)",
+    "exempt": "n/a (news gap)",
+    "unknown": "no delivery data",
+}
 
 # Whole-word / phrase matches in headlines (case-insensitive). Crude by design:
 # a flag says "read these headlines", it is not a sentiment model.
@@ -105,19 +117,24 @@ class Idea:
     bear: list[str] = field(default_factory=list)
     verdict: str = ""
     score: float = 0.0
+    money_flow: str = ""          # in / flat / exempt / unknown (out is dropped)
+    money_text: str = ""
+    deliv_pct: float | None = None
+    dp_trend: float | None = None
+    deals: list[dict] = field(default_factory=list)
 
 
-def hold_text(strategy: str, rec: dict, max_hold: int) -> str:
-    """How long to hold, from the strategy's own closed trades across NSE."""
+def hold_text(strategy: str, rec: dict) -> str:
+    """How long to hold, from the strategy's own closed trades across NSE (no time limit)."""
     allr = rec.get("all", {})
     typ = allr.get("median_days")
     to_target = allr.get("median_days_to_target")
     if not typ:
-        return f"up to {max_hold} sessions"
+        return "no time limit; trail the 20 EMA"
     text = f"typ. {typ:.0f} sessions"
     if to_target and to_target == to_target:  # not NaN
-        text += f", winners hit target in ~{to_target:.0f}"
-    return text + f"; max {max_hold}"
+        text += f" (half sells at target in ~{to_target:.0f})"
+    return text + "; no time limit"
 
 
 def _universe() -> dict[str, india.IndianSecurity]:
@@ -155,18 +172,26 @@ def _records(inds, market, stamp: str) -> dict:
             pass
     last = market.index[-1]
     out = {}
+
+    def summary(df):
+        r = E.summarize(df)
+        if r.get("trades"):
+            hit = df["days_to_target"].dropna()
+            r["median_days_to_target"] = float(hit.median()) if not hit.empty else float("nan")
+        return r
+
     for name in S.STRATEGIES:
         trades = []
         for ind in inds.values():
-            trades += S.backtest(name, ind, market, pd.Timestamp("2022-01-01"))
+            trades += S.backtest(name, ind, market, RECORDS_START)
         df = pd.DataFrame(trades)
         if df.empty:
             out[name] = {k: {"trades": 0} for k in ("all", "12m", "6m")}
             continue
         out[name] = {
-            "all": E.summarize(df),
-            "12m": E.summarize(df[df.signal_date >= last - timedelta(days=365)]),
-            "6m": E.summarize(df[df.signal_date >= last - timedelta(days=182)]),
+            "all": summary(df),
+            "12m": summary(df[df.signal_date >= last - timedelta(days=365)]),
+            "6m": summary(df[df.signal_date >= last - timedelta(days=182)]),
         }
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(out, fh, default=float)
@@ -183,6 +208,16 @@ def _grade(strategy: str, rec: dict) -> str:
     if y > 0 or h > 0 or strategy == "breakout":  # breakouts held up in every tested period
         return "OK"
     return "AVOID"
+
+
+def _record_reason(rec: dict) -> str:
+    """Why a setup's own record only earns OK, in plain words."""
+    six, year = rec.get("6m", {}), rec.get("12m", {})
+    if year.get("trades", 0) < 30 or six.get("trades", 0) < 15:
+        return (f"too few recent trades to confirm it ({year.get('trades', 0)} in 12 months; "
+                f"{rec.get('all', {}).get('expectancy_r', 0):+.2f}R a trade since 2022)")
+    return (f"this setup's recent record is mixed ({year['expectancy_r']:+.2f}R last 12 months, "
+            f"{six.get('expectancy_r', 0):+.2f}R last 6)")
 
 
 def _demote(grade: str) -> str:
@@ -252,8 +287,20 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
         bear.append("Nifty is below its 200-DMA: a weak tape where breakouts fail more often.")
     if market_row["breadth"] < 40:
         bear.append(f"Only {market_row['breadth']:.0f}% of stocks are above their 200-DMA (poor breadth).")
+    if idea.money_flow == "in":
+        bull.append(f"Money flowing in: delivery % is {idea.dp_trend:.2f}x its 100-day average "
+                    f"({idea.deliv_pct:.0f}% delivered on the last day) - funds taking delivery, not day traders.")
+    elif idea.money_flow == "flat":
+        bear.append(f"Money flow flat: delivery % is only {idea.dp_trend:.2f}x its 100-day average; "
+                    "no sign of funds accumulating yet.")
+    inst_buy = [d for d in idea.deals if d["institution"] and d["side"] == "BUY"]
+    inst_sell = [d for d in idea.deals if d["institution"] and d["side"] == "SELL"]
+    for d in inst_buy[:2]:
+        bull.append(f"{d['kind'].title()} deal: {d['client']} bought {d['qty']:,.0f} shares at {d['price']:,.2f}.")
+    for d in inst_sell[:2]:
+        bear.append(f"{d['kind'].title()} deal: {d['client']} sold {d['qty']:,.0f} shares at {d['price']:,.2f}.")
     if idea.earnings_in_window:
-        bear.append(f"Results due {idea.earnings_date}, inside the holding window: gap risk through the stop.")
+        bear.append(f"Results due {idea.earnings_date}, inside the typical hold: gap risk through the stop.")
     if idea.news_flag.startswith("negative"):
         bear.append(f"Headlines carry warning words ({idea.news_flag[10:]}). Read them before buying.")
     elif idea.news_flag.startswith("positive"):
@@ -267,11 +314,18 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
     else:
         if grade == "AVOID":
             reasons.append("this setup has lost money across NSE over the last 6-12 months")
-        elif grade == "OK" and idea.strategy != "breakout":
-            reasons.append("this setup's recent record is mixed")
+        elif grade == "OK":
+            reasons.append(_record_reason(rec))
+        if idea.money_flow in ("flat", "unknown"):
+            grade = "OK" if grade == "GOOD" else grade
+            reasons.append("money flow is flat (delivery % not rising)" if idea.money_flow == "flat"
+                           else "no delivery data to confirm buying")
+        if inst_sell and grade == "GOOD":
+            grade = "OK"
+            reasons.append(f"an institution sold in a {inst_sell[0]['kind']} deal")
         if idea.earnings_in_window:
             grade = _demote(grade) if grade == "GOOD" else grade
-            reasons.append(f"results on {idea.earnings_date} fall inside the hold (gap risk)")
+            reasons.append(f"results on {idea.earnings_date} fall inside the typical hold (gap risk)")
         if market_row["nifty"] < market_row["nifty_sma200"] and grade == "GOOD":
             grade = "OK"
             reasons.append("Nifty is still below its 200-DMA")
@@ -279,11 +333,69 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
     if grade == "GOOD":
         why = {"breakout": "the best-tested setup (made money in every period since 2017)"}.get(
             idea.strategy, "this setup is making money across NSE lately")
+        if idea.money_flow == "in":
+            why += "; money flowing in"
         idea.verdict = f"GOOD: {why}" + (f"; {'; '.join(reasons)}" if reasons else "")
     elif grade == "OK":
         idea.verdict = "OK, half size: " + ("; ".join(reasons) or "one risk to respect")
     else:
         idea.verdict = "AVOID: " + "; ".join(reasons)
+
+
+def _num(v) -> float | None:
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if v != v else round(v, 2)
+
+
+def _delivery(index: pd.DatetimeIndex) -> pd.DataFrame:
+    """NSE delivery % (date x symbol) for the sessions the records and the scan need."""
+    days = [d.date() for d in index if d >= RECORDS_START - timedelta(days=200)]
+    try:
+        return nse_delivery.history(days, workers=6)
+    except Exception:  # delivery is a filter, never a reason to fail the scan
+        return pd.DataFrame()
+
+
+def money_snapshot(inds: dict, market: pd.DataFrame, universe: dict, deals: dict, top: int = 5) -> dict:
+    """Where the money is going, today. Not trade signals: a watch list.
+
+    - ``accumulation``: stage-2 leaders (Trend Template) with the strongest delivery %
+      trend, i.e. funds taking delivery for a month while the stock holds its uptrend.
+    - ``deals``: today's bulk/block deals by institutions in large/mid/small caps.
+    """
+    day = market.index[-1]
+    rows = []
+    for sym, ind in inds.items():
+        if ind.index[-1] != day or "dp_trend" not in ind:  # ETFs carry no delivery column
+            continue
+        row = ind.iloc[-1]
+        dpt = row.get("dp_trend")
+        if dpt is None or dpt != dpt or dpt < S.MONEY_IN:
+            continue
+        if not (row["Close"] >= S.MIN_PRICE and row["turnover_cr"] >= S.MIN_TURNOVER_CR):
+            continue
+        if not bool(S.trend_template(ind.iloc[-30:]).iloc[-1]):
+            continue
+        sec = universe.get(sym)
+        rows.append({
+            "symbol": sym, "name": sec.name if sec else sym, "cap": india.cap_class(sym),
+            "close": round(float(row["Close"]), 2), "dp_trend": round(float(dpt), 2),
+            "deliv_pct": _num(row.get("deliv_pct")), "rs_rank": _num(row.get("rs_rank")),
+            "from_high_pct": round((float(row["Close"]) / float(row["high52_incl"]) - 1) * 100, 1),
+        })
+    rows.sort(key=lambda r: (r["dp_trend"], r["rs_rank"] or 0), reverse=True)
+    inst = []
+    for sym, items in deals.items():
+        if india.cap_class(sym) not in ALLOWED_CAPS:
+            continue
+        for d in items:
+            if d["institution"]:
+                inst.append({"symbol": sym, **d})
+    inst.sort(key=lambda d: d["qty"] * d["price"], reverse=True)
+    return {"accumulation": rows[:top], "deals": inst[:8]}
 
 
 def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
@@ -298,10 +410,19 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
     market = E.market_frame(nifty, md.stocks)
     inds = {s: S.indicators(d) for s, d in md.stocks.items()}
     S.add_rs_rank(inds)
+    deliv = _delivery(market.index)
+    for sym, ind in inds.items():
+        col = sym.removesuffix(".NS")
+        S.add_delivery(ind, deliv[col] if col in deliv else None)
     records = _records(inds, market, f"{md.last.isoformat()}-{len(inds)}")
     inds.update({s: S.indicators(d) for s, d in md.etfs.items()})
     day = market.index[-1]
     mrow = market.iloc[-1]
+
+    def horizon(name: str) -> int:
+        """Sessions to check for results: the strategy's 75th-percentile hold (no sell-by date)."""
+        p75 = records[name].get("all", {}).get("p75_days")
+        return int(p75) if p75 and p75 == p75 else 30
 
     raw_ideas: list[tuple[Idea, pd.Series]] = []
     for sym, ind in inds.items():
@@ -315,6 +436,9 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
             s = S.setup_for(name, row)
             if s is None or s.entry <= s.stop:
                 continue
+            mf = S.money_flow(name, row) if sym not in md.etfs else "unknown"
+            if mf == "out":
+                continue  # money leaving (delivery % falling): the worst group in every period
             grade = _grade(name, records[name])
             factor = 1.0 if grade == "GOOD" else 0.5
             target = s.target if s.target is not None else s.entry
@@ -334,12 +458,14 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
                 max_entry=round(s.entry * 1.03, 2) if s.entry_type == "stop" else round(s.entry * 1.01, 2),
                 stop=s.stop, target=round(target, 2), exit_rule=s.exit_rule,
                 risk_pct=round(s.risk_pct, 2), reward_pct=round(reward / s.entry * 100, 2), rr=round(rr, 2),
-                hold_sessions=s.max_hold, exit_by=str(_trading_days_after(day.date(), s.max_hold)),
+                hold_sessions=horizon(name), exit_by=EXIT_SHORT,
                 quantity=qty, capital_needed=round(qty * s.entry, 0),
                 max_loss=round(qty * (s.entry - s.stop), 0),
                 size_note="half size" if factor < 1 else "full size",
                 earnings_date=None, earnings_in_window=False,
-                hold=hold_text(name, records[name], s.max_hold), grade_meaning=GRADE_MEANING[grade],
+                hold=hold_text(name, records[name]), grade_meaning=GRADE_MEANING[grade],
+                money_flow=mf, money_text=MONEY_TEXT[mf],
+                deliv_pct=_num(row.get("deliv_pct")), dp_trend=_num(row.get("dp_trend")),
             )
             year = records[name].get("12m", {})
             rs = row.get("rs_rank")
@@ -350,6 +476,7 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
                 - idea.risk_pct * 0.2
                 + min(rr, 3) * 0.3
                 + {"Large": 0.3, "Mid": 0.2, "Small": 0.0, "ETF": 0.3}.get(idea.cap, 0.0)
+                + {"in": 1.0, "exempt": 0.3}.get(mf, 0.0)
             )
             raw_ideas.append((idea, row))
 
@@ -360,12 +487,16 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
     ranked = sorted(best.values(), key=lambda x: x[0].score, reverse=True)
     shortlist = ranked[: max(top * 2, top)]
 
+    todays_deals = nse_delivery.deals() if with_news else {}
+
     def enrich(pair):
         idea, _ = pair
+        idea.deals = todays_deals.get(idea.symbol.removesuffix(".NS"), [])
         when = None if idea.cap == "ETF" else next_earnings_date(idea.symbol)
         if when is not None and str(when) > str(day.date()):  # a past date is not the next one
             idea.earnings_date = str(when)
-            idea.earnings_in_window = idea.earnings_date <= idea.exit_by
+            idea.earnings_in_window = idea.earnings_date <= str(
+                _trading_days_after(day.date(), idea.hold_sessions))
         if with_news:
             _news(idea)
         return pair
@@ -407,6 +538,7 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
         "scanned": len(md.stocks),
         "etfs_scanned": len(md.etfs),
         "records": records,
+        "money": money_snapshot(inds, market, universe, todays_deals),
         "notes": notes,
         "capital": capital, "risk_pct": risk_pct,
     }, default=float))

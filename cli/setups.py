@@ -67,14 +67,34 @@ def value_verdict(v: dict) -> str:
 
 
 def _exit_text(i: dict) -> str:
-    trail = "or a close below the 20-day EMA, " if i["strategy"] == "breakout" else ""
-    return f"target, {trail}or sell by {i['exit_by']}"
+    return "sell half at target, stop to cost; rest on a close below the 20-day EMA"
 
 
 def _hold(i: dict, records: dict) -> str:
     rec = records.get(i["strategy"], {}).get("all", {})
-    typ = rec.get("median_days")
-    return f"~{typ:.0f} sessions (max {i['hold_sessions']})" if typ else f"up to {i['hold_sessions']} sessions"
+    typ, hit = rec.get("median_days"), rec.get("median_days_to_target")
+    if not typ:
+        return "no time limit"
+    text = f"~{typ:.0f} sessions"
+    if hit and hit == hit:
+        text += f" (target ~{hit:.0f})"
+    return text + ", no limit"
+
+
+def _money(i: dict) -> str:
+    mf = i.get("money_flow", "")
+    if mf == "in":
+        return f"IN ({i['dp_trend']:.2f}x)"
+    if mf == "flat":
+        return f"flat ({i['dp_trend']:.2f}x)"
+    return {"exempt": "n/a (news)", "unknown": "no data"}.get(mf, "-")
+
+
+def _record(i: dict, records: dict) -> str:
+    rec = records.get(i["strategy"], {}).get("12m", {})
+    if not rec.get("trades"):
+        return "-"
+    return f"{rec['win_rate']:.0f}% won, {rec['expectancy_r']:+.2f}R"
 
 
 def render_markdown(r: dict) -> str:
@@ -88,19 +108,41 @@ def render_markdown(r: dict) -> str:
         f"{m['breadth_pct']:.0f}% of stocks above their 200-DMA",
         *[f"> {n}" for n in swing["notes"]],
         "",
-        f"## SWING - top {len(swing['ideas'])} (short term: days to weeks; stop 5-10%, target 10-20%)",
+        f"## SWING - top {len(swing['ideas'])} (short term: days to weeks; stop 5-10%, target 10-20%, "
+        "no time limit)",
         "",
-        "| # | Name | Ticker | Cap | Setup | Verdict | Buy above (max) | Stoploss | Target | Exit | Hold |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| # | Name | Ticker | Cap | Setup | Money flow | Setup's last 12m | Verdict | Buy above (max) | Stoploss | "
+        "Target (sell half) | Exit | Hold |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i in swing["ideas"]:
         out.append(
             f"| {i['rank']} | {i['name']} | {i['symbol'].removesuffix('.NS')} | {i['cap']} | {i['strategy_label']} | "
-            f"**{i['verdict']}** | {i['entry']:,.2f} ({i['max_entry']:,.2f}) | {i['stop']:,.2f} (-{i['risk_pct']:.1f}%) | "
+            f"{_money(i)} | {_record(i, swing['records'])} | **{i['verdict']}** | {i['entry']:,.2f} ({i['max_entry']:,.2f}) | {i['stop']:,.2f} (-{i['risk_pct']:.1f}%) | "
             f"{i['target']:,.2f} (+{i['reward_pct']:.1f}%) | {_exit_text(i)} | {_hold(i, swing['records'])} |"
         )
     if not swing["ideas"]:
-        out.append("| - | No setup inside the 5-10% stop / 10-20% target bands today | | | | | | | | | |")
+        out.append("| - | No setup inside the 5-10% stop / 10-20% target bands today | | | | | | | | | | | |")
+    money = swing.get("money", {})
+    if money.get("accumulation") or money.get("deals"):
+        out += ["", "## MONEY FLOW - where funds are buying (watch list, not a buy signal)", ""]
+    if money.get("accumulation"):
+        out += ["Stage-2 leaders with delivery % rising most (20-day average vs 100-day): buy only when one of "
+                "them shows a setup above.", "",
+                "| Name | Ticker | Cap | Close | Delivery trend | Last delivery % | RS rank | From 52w high |",
+                "|---|---|---|---|---|---|---|---|"]
+        for a in money["accumulation"]:
+            out.append(f"| {a['name']} | {a['symbol'].removesuffix('.NS')} | {a['cap']} | {a['close']:,.2f} | "
+                       f"{a['dp_trend']:.2f}x | {a['deliv_pct'] or '-'}% | {a['rs_rank'] or '-'} | "
+                       f"{a['from_high_pct']:+.1f}% |")
+    if money.get("accumulation") and not money.get("deals"):
+        out += ["", "No bulk/block deal by an institution in a large/mid/small cap today."]
+    if money.get("deals"):
+        out += ["", "Today's bulk/block deals by institutions (large/mid/small caps):", "",
+                "| Ticker | Deal | Side | Client | Qty | Price |", "|---|---|---|---|---|---|"]
+        for d in money["deals"]:
+            out.append(f"| {d['symbol']} | {d['kind']} | {d['side']} | {d['client']} | {d['qty']:,.0f} | "
+                       f"{d['price']:,.2f} |")
     out += ["", f"## VALUE - top {len(value['picks'])} (medium to long term: 3-12 months)", ""]
     if value["picks"]:
         out += ["| # | Name | Ticker | Cap | Sector | P/E (sector) | ROE | Sales gr. | Profit gr. | Chart | Verdict | "
@@ -128,8 +170,11 @@ def render_markdown(r: dict) -> str:
     out += [
         "",
         "Verdicts: **GOOD** take it; **OK** one risk to respect, half size; **AVOID** the setup is losing money "
-        "across NSE lately or the news is bad. Swing entry: a stop-limit buy (trigger = buy above, limit = max) "
-        "before 09:15; after the fill, a GTT OCO with the stoploss and target. Not investment advice.",
+        "across NSE lately or the news is bad. Money flow: delivery % trend (20-day vs 100-day average); IN is "
+        "1.05x or more, money OUT setups are dropped. Swing entry: a stop-limit buy (trigger = buy above, "
+        "limit = max) before 09:15; after the fill, a GTT OCO with the stoploss and the target for HALF the "
+        "shares. When the target fills, move the stop on the rest to your buy price and sell it on a close below "
+        "the 20-day EMA. No time limit. Not investment advice.",
     ]
     return "\n".join(out)
 

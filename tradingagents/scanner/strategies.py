@@ -1,7 +1,21 @@
 """Five swing setups for NSE stocks, drawn from the best-documented swing traders.
 
 All are long-only, daily-bar, delivery trades with a buy-stop entry (it fills only if
-the move starts) and a stop of 5-10% with a 2R target (10-20%):
+the move starts) and a stop of 5-10%. The exit has no time limit (Qullamaggie and
+Minervini scale out and trail; they do not sell on a calendar):
+
+- sell half at the 2R target (10-20%) and move the stop on the rest to the buy price;
+- sell the rest at the next open after a close below the 20-day EMA (or at the stop).
+
+Tested 2017-2026 on all large/mid/small caps: +0.23R a trade against +0.09R for the
+old "2R target or sell after 20 sessions" (docs/STRATEGY.md).
+
+Follow the money: delivery % (the share of volume taken into demat, which is what
+funds do) from NSE's daily MTO file. ``dp_trend`` is the 20-day average delivery % over
+the 100-day average. Money IN (>= 1.05) was better in every period, money OUT (< 1.00)
+worst; episodic pivots are exempt (news days are full of intraday churn).
+
+The five setups:
 
 - ``breakout``: a close at a new 52-week high on volume out of a tight base. The
   original tested rule (``engine``): the one setup that held up in 2022-26.
@@ -46,7 +60,7 @@ class Setup:
     stop: float
     target: float | None     # fixed target, or None when the exit is a signal
     exit_rule: str           # plain words, for the report
-    max_hold: int
+    max_hold: int | None     # None: no time limit (the trailing exit decides)
     exit_sma5: bool = False  # exit at the first close above the 5-DMA
 
     @property
@@ -132,6 +146,35 @@ def add_rs_rank(inds: dict[str, pd.DataFrame]) -> None:
     ranks = panel.rank(axis=1, pct=True) * 99
     for s, d in inds.items():
         d["rs_rank"] = ranks[s].reindex(d.index)
+
+
+# Follow the money (delivery % trend). Episodic pivots are exempt.
+MONEY_IN = 1.05
+MONEY_OUT = 1.00
+MONEY_EXEMPT = ("ep",)
+EXIT_RULE = ("sell half at the target and move the stop to your buy price; "
+             "sell the rest on a close below the 20-day EMA (next open)")
+
+
+def add_delivery(ind: pd.DataFrame, deliv_pct: pd.Series | None) -> None:
+    """Write NSE delivery % and its trend (20-day mean / 100-day mean) into ``ind``."""
+    if deliv_pct is None or deliv_pct.dropna().empty:
+        ind["deliv_pct"] = np.nan
+        ind["dp_trend"] = np.nan
+        return
+    dp = deliv_pct.reindex(ind.index)
+    ind["deliv_pct"] = dp
+    ind["dp_trend"] = dp.rolling(20, min_periods=12).mean() / dp.rolling(100, min_periods=60).mean()
+
+
+def money_flow(name: str, row: pd.Series) -> str:
+    """'in', 'flat', 'out', 'exempt' or 'unknown' (no delivery data), from the delivery % trend."""
+    if name in MONEY_EXEMPT:
+        return "exempt"
+    v = row.get("dp_trend", np.nan)
+    if v is None or v != v:
+        return "unknown"
+    return "in" if v >= MONEY_IN else ("flat" if v >= MONEY_OUT else "out")
 
 
 def _liquid(ind: pd.DataFrame) -> pd.Series:
@@ -228,7 +271,7 @@ def setup_for(name: str, row: pd.Series) -> Setup | None:
     target = s.target
     if not s.exit_sma5:
         target = round(s.entry + TARGET_R * (s.entry - stop), 2)
-    return Setup(s.strategy, s.entry_type, s.entry, stop, target, s.exit_rule, s.max_hold, s.exit_sma5)
+    return Setup(s.strategy, s.entry_type, s.entry, stop, target, s.exit_rule, None, s.exit_sma5)
 
 
 def _raw_setup(name: str, row: pd.Series) -> Setup | None:
@@ -236,92 +279,109 @@ def _raw_setup(name: str, row: pd.Series) -> Setup | None:
         p = E.plan_for(row, BREAKOUT_RULES)
         if p is None:
             return None
-        return Setup(name, "stop", p.trigger, p.stop, p.target,
-                     "target 2R, or the close of session 20", 20)
+        return Setup(name, "stop", p.trigger, p.stop, p.target, EXIT_RULE, None)
     if name == "vcp":
         trigger = round(float(row["high10"]) * 1.001, 2)
-        return _fixed(name, trigger, float(row["low10"]) * 0.998, 2.0, 20)
+        return _fixed(name, trigger, float(row["low10"]) * 0.998, 2.0)
     if name == "flag":
         trigger = round(float(row["high10"]) * 1.001, 2)
-        return _fixed(name, trigger, float(row["low5"]) * 0.998, 2.0, 20)
+        return _fixed(name, trigger, float(row["low5"]) * 0.998, 2.0)
     if name == "ep":
         trigger = round(float(row["High"]) * 1.001, 2)
-        return _fixed(name, trigger, float(row["Low"]) * 0.998, 2.0, 20)
+        return _fixed(name, trigger, float(row["Low"]) * 0.998, 2.0)
     if name == "crossback":
         trigger = round(float(row["High"]) * 1.001, 2)
         stop = min(float(row["low5"]), float(row["ema20"])) * 0.995
-        return _fixed(name, trigger, stop, 2.0, 20)
+        return _fixed(name, trigger, stop, 2.0)
     raise ValueError(f"unknown strategy {name!r}")
 
 
-def _fixed(name: str, trigger: float, stop: float, r: float, hold: int) -> Setup | None:
+def _fixed(name: str, trigger: float, stop: float, r: float) -> Setup | None:
     risk = trigger - stop
     if risk <= 0:
         return None
-    return Setup(name, "stop", round(trigger, 2), round(stop, 2), round(trigger + r * risk, 2),
-                 f"target {r:g}R, or the close of session {hold}", hold)
+    return Setup(name, "stop", round(trigger, 2), round(stop, 2), round(trigger + r * risk, 2), EXIT_RULE, None)
+
+
+def _leg(o, h, low, c, trail, e, n, stop, target):
+    """One position from bar ``e``: (exit price, exit bar, outcome), or None while still open."""
+    for j in range(e, n):
+        if j > e and o[j] <= stop:
+            return o[j], j, "stop"
+        if low[j] <= stop:
+            return stop, j, "stop"
+        if target is not None:
+            if j > e and o[j] >= target:
+                return o[j], j, "target"
+            if h[j] >= target:
+                return target, j, "target"
+        if trail is not None and j > e and c[j] < trail[j]:
+            return (o[j + 1], j + 1, "trail") if j + 1 < n else None
+    return None
+
+
+def run_exit(o, h, low, c, ema20, e: int, entry: float, stop: float, target: float):
+    """The swing exit from entry bar ``e``: half at ``target`` (then the stop moves to the
+    buy price), the rest on a close below the 20-day EMA. Returns
+    ``(gross return, exit bar, outcome)``, or None while the trade is still open."""
+    n = len(o)
+    a = _leg(o, h, low, c, None, e, n, stop, target)
+    if a is None:
+        return None
+    if a[2] != "target":
+        return a[0] / entry - 1, a[1], a[2]
+    if a[1] + 1 >= n:
+        return None
+    b = _leg(o, h, low, c, ema20, a[1] + 1, n, entry, None)
+    if b is None:
+        return None
+    gross = (a[0] / entry - 1 + b[0] / entry - 1) / 2
+    return gross, b[1], "target/" + ("breakeven" if b[2] == "stop" else "trail")
 
 
 def simulate(ind: pd.DataFrame, i: int, s: Setup, arrays) -> dict | None:
     """Replay one setup from signal bar ``i``. None: no fill, skipped, or still open."""
-    o, h, low, c, sma5 = arrays
+    o, h, low, c, ema20 = arrays
     n = len(o)
     e = i + 1
-    if e >= n:
+    if e >= n or h[e] < s.entry:
         return None
-    if s.entry_type == "stop":
-        if h[e] < s.entry:
-            return None
-        entry = max(s.entry, o[e])
-        if entry > s.entry * 1.03:
-            return None  # gapped >3% over the trigger: no chasing
-    else:
-        entry = o[e]
-        if entry <= s.stop:
-            return None
+    entry = max(s.entry, o[e])
+    if entry > s.entry * 1.03:
+        return None  # gapped >3% over the trigger: no chasing
     risk = entry - s.stop
     if risk <= 0:
         return None
-    target = None if s.target is None or s.exit_sma5 else entry + (s.target - s.entry)
-    last = min(n, e + s.max_hold)
-    exit_px, outcome, j = None, "time", e
-    for j in range(e, last):
-        if j > e and o[j] <= s.stop:
-            exit_px, outcome = o[j], "stop"
-            break
-        if low[j] <= s.stop:
-            exit_px, outcome = s.stop, "stop"
-            break
-        if target is not None:
-            if j > e and o[j] >= target:
-                exit_px, outcome = o[j], "target"
-                break
-            if h[j] >= target:
-                exit_px, outcome = target, "target"
-                break
-        if s.exit_sma5 and c[j] > sma5[j]:
-            exit_px, outcome = c[j], "target"
-            break
-    else:
-        if e + s.max_hold > n:
-            return None
-        exit_px = c[j]
-    net = exit_px / entry - 1 - COST_PCT / 100
-    return {"entry_date": ind.index[e], "exit_date": ind.index[j], "entry": entry, "exit": exit_px,
+    target = entry + (s.target - s.entry)
+    res = run_exit(o, h, low, c, ema20, e, entry, s.stop, target)
+    if res is None:
+        return None
+    gross, j, outcome = res
+    net = gross - COST_PCT / 100
+    t_hit = None
+    if outcome.startswith("target"):
+        t_hit = next(k for k in range(e, j + 1) if h[k] >= target) - e + 1
+    return {"entry_date": ind.index[e], "exit_date": ind.index[j], "entry": entry,
             "outcome": outcome, "days": j - e + 1, "ret_pct": net * 100, "r": net * entry / risk,
-            "stop": s.stop}
+            "stop": s.stop, "days_to_target": t_hit}
 
 
 def backtest(name: str, ind: pd.DataFrame, market: pd.DataFrame | None,
-             start=None, end=None) -> list[dict]:
+             start=None, end=None, money: bool = True) -> list[dict]:
+    """Every closed trade of ``name`` on one stock. ``money``: only the trades the live scan
+    can grade GOOD (money IN, or an exempt strategy, or a stock with no delivery data)."""
     mask = signals(name, ind, market).to_numpy()
-    arrays = tuple(ind[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close", "sma5"))
+    arrays = tuple(ind[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close", "ema20"))
+    has_dp = "dp_trend" in ind and ind["dp_trend"].notna().any()
     trades, busy = [], -1
     for i in np.flatnonzero(mask):
         d = ind.index[i]
         if i <= busy or (start is not None and d < start) or (end is not None and d > end):
             continue
-        s = setup_for(name, ind.iloc[i])
+        row = ind.iloc[i]
+        if money and has_dp and money_flow(name, row) not in ("in", "exempt"):
+            continue
+        s = setup_for(name, row)
         if s is None:
             continue
         t = simulate(ind, i, s, arrays)

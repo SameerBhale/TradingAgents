@@ -139,8 +139,38 @@ def test_etf_ideas_are_labelled_etf(monkeypatch):
 
 def test_hold_text_from_record():
     rec = {"all": {"median_days": 13.0, "median_days_to_target": 8.0}}
-    assert D.hold_text("breakout", rec, 20) == "typ. 13 sessions, winners hit target in ~8; max 20"
-    assert D.hold_text("vcp", {"all": {"trades": 0}}, 20) == "up to 20 sessions"
+    assert D.hold_text("breakout", rec) == "typ. 13 sessions (half sells at target in ~8); no time limit"
+    assert D.hold_text("vcp", {"all": {"trades": 0}}) == "no time limit; trail the 20 EMA"
+
+
+def test_exit_half_at_target_then_trail_the_20_ema():
+    # entry 100, stop 95, target 110: target hits on bar 2, then the rest rides until a close
+    # under the EMA on bar 5 and sells at bar 6's open.
+    o = np.array([100, 104, 108, 112, 114, 111, 109.0])
+    h = np.array([101, 106, 111, 115, 116, 112, 110.0])
+    low = np.array([99, 103, 107, 111, 113, 108, 108.0])
+    c = np.array([100, 105, 110, 114, 115, 109, 109.0])
+    ema = np.array([98, 100, 103, 106, 109, 110, 110.0])
+    gross, j, outcome = S.run_exit(o, h, low, c, ema, 0, 100.0, 95.0, 110.0)
+    assert outcome == "target/trail" and j == 6
+    assert gross == pytest.approx(((110 / 100 - 1) + (109 / 100 - 1)) / 2)
+    # a stop before the target sells everything at the stop; no calendar exit while open
+    gross, j, outcome = S.run_exit(o, h, np.array([99, 94, 107, 111, 113, 108, 108.0]), c, ema, 0,
+                                   100.0, 95.0, 130.0)
+    assert outcome == "stop" and gross == pytest.approx(-0.05)
+    assert S.run_exit(o, h, low, c, np.zeros(7), 0, 100.0, 90.0, 200.0) is None
+
+
+def test_money_flow_from_delivery_trend():
+    ind = S.indicators(_frame(np.linspace(100, 200, 300)))
+    rising = pd.Series(np.r_[np.full(280, 40.0), np.full(20, 60.0)], index=ind.index)
+    S.add_delivery(ind, rising)
+    assert S.money_flow("vcp", ind.iloc[-1]) == "in"
+    S.add_delivery(ind, pd.Series(np.r_[np.full(280, 60.0), np.full(20, 40.0)], index=ind.index))
+    assert S.money_flow("vcp", ind.iloc[-1]) == "out"
+    assert S.money_flow("ep", ind.iloc[-1]) == "exempt"
+    S.add_delivery(ind, None)
+    assert S.money_flow("vcp", ind.iloc[-1]) == "unknown"
 
 
 def test_cash_etfs_are_not_trade_candidates():

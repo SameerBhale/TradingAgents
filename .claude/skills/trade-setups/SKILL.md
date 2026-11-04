@@ -2,7 +2,8 @@
 name: trade-setups
 description: >-
   NSE trade list in two short tables: the top 5 swing setups (short term; stop
-  5-10%, target 10-20%) from five strategies taken from champion traders
+  5-10%, target 10-20% for half, the rest trailed on the 20 EMA, no time limit;
+  filtered by NSE delivery-% money flow) from five strategies taken from champion traders
   (52-week breakout, Minervini VCP, Qullamaggie flag and episodic pivot, Oliver
   Kell EMA crossback), and the top 3 value buys (medium/long term, 3-12 months;
   quality growth at a fair price in a stage-2 uptrend, with concall headlines).
@@ -32,14 +33,19 @@ last session, say so and re-run with `--refresh` after 18:00.
 
 ## 2. Show
 
-The header line and notes, then both tables exactly as printed: **SWING** (short term)
-and **VALUE** (medium to long term). Do not add capital, money, quantity or sizing
+The header line and notes, then the tables exactly as printed: **SWING** (short term),
+**MONEY FLOW** (watch list: stage-2 leaders where delivery % is rising, plus today's
+institutional bulk/block deals; not buy signals) and **VALUE** (medium to long term). Do not add capital, money, quantity or sizing
 columns, and do not ask how much the user wants to invest.
 
 Verdicts, in plain words (they replace the old grades and the auditor):
 - **GOOD**: this setup is making money across NSE lately; take it.
-- **OK**: one risk to respect (results inside the hold, a mixed recent record, or the
-  Nifty below its 200-DMA); half size.
+- **OK**: one risk to respect (money flow flat, results inside the typical hold, a mixed
+  or too-thin recent record, an institution selling, or the Nifty below its 200-DMA); half size.
+
+Money flow (docs/STRATEGY.md): delivery % 20-day average / 100-day average. IN (>= 1.05)
+is needed for GOOD; flat caps it at OK; OUT is dropped by the scanner. Explain it as
+"funds are taking delivery" in plain words.
 - **AVOID**: the setup is losing money across NSE lately, or the news is bad.
 
 ## 3. Bull / Bear / Judge (short)
@@ -57,17 +63,17 @@ For the top 3 swing ideas and the top value buy, read the JSON
 ## 4. Close: what to do now
 
 1. Swing: a stop-limit buy (trigger = "buy above", limit = max) before 09:15 IST; after
-   the fill, a GTT OCO with the stoploss and target. Breakouts: selling on a close below
-   the 20-day EMA tested better than the fixed target (see docs/STRATEGY.md); the
-   target stays the default. Skip anything marked AVOID.
+   the fill, a GTT OCO with the stoploss and the target for HALF the shares. When the
+   target fills, move the stop on the rest to the buy price and sell it on a close below
+   the 20-day EMA. No time limit. Skip anything marked AVOID.
 2. Value: a limit buy at or below the price shown, stoploss and target as a GTT OCO;
    review on every quarterly result.
 3. Offer `stock-report` (a full PDF) for the top value buy; run it only on a yes.
 
 ## 5. Holding time
 
-- **Swing**: the row's Hold (median sessions from the strategy's own trades) and its
-  sell-by date; the limit is 20 sessions.
+- **Swing**: the row's Hold (median sessions from the strategy's own trades). There is no
+  time limit: the 20-day EMA decides when the second half is sold.
 - **Value**: 3-12 months, reviewed on each quarterly result. Not backtested; say so.
 - **A journal position**: `tradingagents journal list`, then the matching rule.
 

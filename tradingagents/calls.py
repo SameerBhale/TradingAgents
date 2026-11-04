@@ -3,7 +3,8 @@
 Each `setups` run appends its calls to ``~/.tradingagents/calls.jsonl`` (once per
 date, symbol and kind). ``review`` replays each swing/value call on the prices
 that followed (same mechanics as the backtest: buy-stop or buy at the next open,
-stop, target, time exit) and summarizes the hit rate by verdict and strategy.
+stop, target, time exit; swing calls since 2026-11-05: half at the target,
+the rest on a 20-EMA close) and summarizes the hit rate by verdict and strategy.
 ``feedback`` attaches your notes. Together they show which calls
 deserve more trust, and which need a rule change.
 """
@@ -51,7 +52,7 @@ def record(setups: dict, path: str | None = None) -> int:
         new.append({"as_of": as_of, "kind": "swing", "symbol": i["symbol"], "strategy": i["strategy"],
                     "grade": i["grade"], "cap": i["cap"], "entry_type": i["entry_type"], "entry": i["entry"],
                     "stop": i["stop"], "target": i["target"], "hold_sessions": i["hold_sessions"],
-                    "verdict": i["verdict"]})
+                    "verdict": i["verdict"], "exit": "half_ema20", "money_flow": i.get("money_flow")})
     for v in setups.get("value", {}).get("picks", []):
         new.append({"as_of": as_of, "kind": "value", "symbol": v["symbol"], "strategy": "value", "grade": "V",
                     "cap": v["cap"], "entry_type": "open", "entry": v["entry"], "stop": v["stop"],
@@ -95,6 +96,8 @@ def outcome(call: dict, bars: pd.DataFrame) -> dict:
     else:
         entry = first["Open"]
     stop, target = call["stop"], call.get("target")
+    if call.get("exit") == "half_ema20" and target:
+        return _outcome_trailing(bars, after, entry, stop, entry + (target - call["entry"]))
     window = after.iloc[: call["hold_sessions"]]
     for k, (_, b) in enumerate(window.iterrows()):
         if b["Low"] <= stop:
@@ -107,6 +110,23 @@ def outcome(call: dict, bars: pd.DataFrame) -> dict:
     if len(window) < call["hold_sessions"]:
         return {"status": "open", "ret_pct": round((last["Close"] / entry - 1) * 100, 2), "days": len(window)}
     return {"status": "time", "ret_pct": round((last["Close"] / entry - 1) * 100, 2), "days": len(window)}
+
+
+def _outcome_trailing(bars: pd.DataFrame, after: pd.DataFrame, entry: float, stop: float,
+                      target: float) -> dict:
+    """The no-time-limit swing exit: half at the target, the rest on a 20-EMA close."""
+    from tradingagents.scanner.strategies import run_exit
+
+    ema20 = bars["Close"].ewm(span=20, adjust=False).mean().reindex(after.index)
+    arr = [after[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close")]
+    res = run_exit(*arr, ema20.to_numpy(dtype=float), 0, entry, stop, target)
+    if res is None:
+        hit = bool((after["High"] >= target).any())
+        return {"status": "open", "ret_pct": round((after["Close"].iloc[-1] / entry - 1) * 100, 2),
+                "days": len(after), "half_sold": hit}
+    gross, j, outcome = res
+    status = "stop" if outcome == "stop" else "target"
+    return {"status": status, "exit_detail": outcome, "ret_pct": round(gross * 100, 2), "days": j + 1}
 
 
 def review(bars_by_symbol: dict[str, pd.DataFrame], path: str | None = None) -> dict:
