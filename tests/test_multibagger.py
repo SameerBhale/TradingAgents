@@ -59,7 +59,32 @@ def test_the_list_adds_holds_and_removes(tmp_path, monkeypatch):
     assert r["added"] == ["ABC.NS"] and r["rows"][0]["status"] == "NEW"
     r = MB.update(MD, path=path)
     assert r["added"] == [] and r["rows"][0]["status"] == "HOLD"
+    funds["ABC.NS"]["trailingPE"] = 75.0   # one test fails: on REVIEW, not removed
+    r = MB.update(MD, path=path)
+    assert r["rows"][0]["status"] == "REVIEW" and "P/E" in r["rows"][0]["note"]
+    funds["ABC.NS"]["trailingPE"] = 30.0
     funds["ABC.NS"]["returnOnEquity"] = 0.08  # the story breaks
     r = MB.update(MD, path=path)
     assert r["removed"] == ["ABC.NS"] and not r["rows"]
     assert "ROE fell" in MB.load_list(path)["removed"][-1]["reason"]
+
+
+@pytest.mark.unit
+def test_next_in_line_lists_one_test_misses(tmp_path, monkeypatch):
+    df = _uptrend()
+    sec = MB.india.IndianSecurity("XYZ", "Xyz Limited", "EQ", "EQUITY", "INE000000002", "2000-01-01")
+
+    class MD:
+        stocks = {"XYZ.NS": df}
+        micro = {}
+        securities = {"XYZ.NS": sec}
+        last = df.index[-1].date()
+
+    MD.nifty = df
+    monkeypatch.setattr(MB, "fundamentals_snapshot",
+                        lambda syms, stamp: {s: {**GOOD_F, "operatingMargins": 0.11} for s in syms})
+    monkeypatch.setattr(MB, "annual_history", lambda syms, stamp: {s: GOOD_H for s in syms})
+    monkeypatch.setattr(MB.india, "cap_class", lambda s: "Small")
+    r = MB.update(MD, path=str(tmp_path / "mb.json"))
+    assert not r["rows"] and r["next_in_line"][0]["symbol"] == "XYZ.NS"
+    assert "operating margin" in r["next_in_line"][0]["missing"]

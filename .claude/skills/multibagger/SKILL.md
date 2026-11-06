@@ -29,6 +29,10 @@ Show the header, the "Prices:" line and the table exactly as printed. Then, in p
   100%, over half of promoter shares pledged, or 35% under the added price and below the
   200-DMA); the reason is printed.
 
+**Next in line** (shown under the list): stocks off the list that fail exactly one test
+(named in "Missing test"). They join automatically the day that test passes; mention the
+one or two closest (a small gap such as margin 11% vs 12%, or PEG 1.51 vs 1.5).
+
 For each NEW stock write one line: why it qualifies (growth, ROE, owner holding) and the
 biggest risk (valuation, a short history, a pledge, a cyclical business). Say how many years
 of history the numbers rest on (the History column).

@@ -1,4 +1,4 @@
-"""Seven swing setups for NSE stocks, drawn from the best-documented swing traders.
+"""Eight swing setups for NSE stocks, drawn from the best-documented swing traders.
 
 All are long-only, daily-bar, delivery trades with a buy-stop entry (it fills only if
 the move starts) and a stop of 5-10%. The exit has no time limit (Qullamaggie and
@@ -15,7 +15,7 @@ funds do) from NSE's daily MTO file. ``dp_trend`` is the 20-day average delivery
 the 100-day average. Money IN (>= 1.05) was better in every period, money OUT (< 1.00)
 worst; episodic pivots are exempt (news days are full of intraday churn).
 
-The seven setups:
+The eight setups:
 
 - ``breakout``: a close at a new 52-week high on volume out of a tight base. The
   original tested rule (``engine``): the one setup that held up in 2022-26.
@@ -32,7 +32,8 @@ The seven setups:
 - ``ep``: Qullamaggie's episodic pivot. A gap-up day of 6%+ on 3x average volume after
   news (results, orders), closing strong, in a stock above its 200-DMA. Buy-stop above
   the day's high; stop under the day's low.
-- ``retest``: breakout and retest of a horizontal level (the supply-zone flip taught by
+- ``retest``: breakout and retest of a horizontal level (traded: all-time high and flag and
+  pole only; see HORIZONTAL_KINDS) (the supply-zone flip taught by
   Indian price-action analysts, e.g. Apoorv Dubey's posts on TradingView). The level is
   the first that fits: an all-time high (multi-year base), the 52-week high, an
   ascending-triangle top (2+ touches, rising lows) or a cup-and-handle / base rim (a
@@ -41,6 +42,12 @@ The seven setups:
   on 1.5x volume, a move of 4%+ away, a lighter-volume pullback that tests the level
   (low within 3%) and holds it (no close more than 3% under), then a bounce bar that
   closes above the prior day's high. Buy-stop above the bounce; stop under the retest low.
+- ``bbb``: "Buy Before Breakout" (@VCPSwing on X): a stage-2 leader in a base of 4+ weeks,
+  0-8% under its pivot, prints a pocket pivot (Morales & Kacher: an up day on volume above
+  every down day's volume of the prior 10 sessions, closing above the 10-day EMA), not 30%+
+  above its 50-EMA nor more than 6% under its 50-DMA. Buy-stop above the day; stop under
+  its low. His "Alpha new high before price" trigger was tested and dropped (10-year test:
+  85 trades, mixed); the pocket pivot in a base made money in all four periods.
 - ``ct``: the same retest after a CT (counter-trendline) break: a falling line through
   the highest swing high of the year and the lower swing highs after it, broken on 1.5x
   volume. A reversal, so it needs the 50-DMA, not a full stage-2 trend.
@@ -80,7 +87,7 @@ class Setup:
         return (self.entry - self.stop) / self.entry * 100
 
 
-STRATEGIES = ("breakout", "vcp", "flag", "ep", "crossback", "retest", "ct")
+STRATEGIES = ("breakout", "vcp", "flag", "ep", "crossback", "retest", "ct", "bbb")
 LABELS = {
     "breakout": "52-week high breakout",
     "vcp": "Minervini VCP (tight base, stage-2 uptrend)",
@@ -89,6 +96,7 @@ LABELS = {
     "crossback": "Kell EMA crossback (leader dips to 10/20 EMA, reclaims)",
     "retest": "Breakout + retest (old resistance holds as support)",
     "ct": "CT trendline breakout + retest",
+    "bbb": "Buy before breakout (pocket pivot in a base)",
 }
 SOURCES = {
     "breakout": "52-week-high breakouts (Darvas, O'Neil); tested on NSE 2017-2026",
@@ -99,11 +107,16 @@ SOURCES = {
     "retest": "Breakout and retest / supply-zone flip (Indian price-action practice, e.g. Apoorv Dubey); "
               "cup and handle (O'Neil), ascending triangle (Bulkowski)",
     "ct": "Counter-trendline breakout and retest (Indian price-action practice)",
+    "bbb": "Buy Before Breakout (@VCPSwing on X); pocket pivots (Gil Morales & Chris Kacher)",
 }
 # The level a retest setup broke, in plain words (``rt_kind``).
 RETEST_KINDS = {1: "all-time high (multi-year base)", 2: "52-week high", 3: "ascending triangle",
                 4: "cup and handle / base rim", 5: "CT (falling trendline)", 6: "flag and pole"}
-HORIZONTAL_KINDS = (1, 2, 3, 4, 6)
+# The retest trades only the levels that held up out of sample (10-year test, 2026-11-06):
+# all-time high and flag and pole made money in all four periods (2017-20, 2021-22,
+# 2023-24, 2025-26); the 52-week high, ascending triangle and cup/base retests lost in
+# three of four, so they are still detected (and named) but not traded.
+HORIZONTAL_KINDS = (1, 6)
 
 BREAKOUT_RULES = E.Rules(
     lookback=250, vol_mult=1.5, base_days=20, max_base_pct=12.0, max_extension_pct=4.0,
@@ -180,6 +193,13 @@ def _indicators(df: pd.DataFrame) -> pd.DataFrame:
     up_v = ind["Volume"].where(chg > 0, 0.0).rolling(50).sum()
     dn_v = ind["Volume"].where(chg < 0, 0.0).rolling(50).sum()
     ind["ud_ratio"] = up_v / dn_v.replace(0, np.nan)
+    # Buy Before Breakout: the base's pivot (the 60-session high, set 20+ sessions ago) and
+    # the pocket-pivot volume test (the largest down-day volume of the prior 10 sessions).
+    recent20 = h.shift(1).rolling(20).max()
+    older = h.shift(21).rolling(40).max()
+    ind["bbb_pivot"] = older.where(older >= recent20)
+    ind["down_v10"] = ind["Volume"].where(chg < 0, 0.0).shift(1).rolling(10).max()
+    ind["ema50"] = c.ewm(span=50, adjust=False).mean()
     _add_retest(ind)
     return ind
 
@@ -456,6 +476,16 @@ def signals(name: str, ind: pd.DataFrame, market: pd.DataFrame | None) -> pd.Ser
             & (c >= lvl) & (c <= lvl * 1.08)                                # near the level, not extended
         )
         return m.fillna(False)
+    if name == "bbb":
+        piv = ind["bbb_pivot"]
+        m = (
+            base & _market_ok(ind, market) & trend_template(ind)
+            & (c < piv) & (c >= piv * 0.92)                                   # in the base, under the pivot
+            & (c > c.shift(1)) & (ind["Volume"] > ind["down_v10"])            # a pocket pivot
+            & (c > ind["ema10"])
+            & (c <= ind["ema50"] * 1.30) & (c >= ind["sma50"] * 0.94)         # not extended, not broken
+        )
+        return m.fillna(False)
     raise ValueError(f"unknown strategy {name!r}")
 
 
@@ -503,6 +533,8 @@ def _raw_setup(name: str, row: pd.Series) -> Setup | None:
         trigger = round(float(row["High"]) * 1.001, 2)
         stop = min(float(row["low5"]), float(row["ema20"])) * 0.995
         return _fixed(name, trigger, stop, 2.0)
+    if name == "bbb":
+        return _fixed(name, round(float(row["High"]) * 1.001, 2), float(row["Low"]) * 0.998, 2.0)
     if name in ("retest", "ct"):
         trigger = round(float(row["High"]) * 1.001, 2)
         stop = min(float(row["rt_low"]), float(row["rt_level"]) * 0.99) * 0.995

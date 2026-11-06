@@ -51,7 +51,7 @@ GRADE_MEANING = {
     "OK": "OK: one risk to respect; half size",
     "AVOID": "AVOID: this setup is losing money lately or the news is bad",
 }
-RECORDS_VERSION = "v6"  # bump when the strategies change, so their records are recomputed
+RECORDS_VERSION = "v8"  # bump when the strategies change, so their records are recomputed
 SWING_TARGET_BAND = (10.0, 20.0)
 RECORDS_START = pd.Timestamp("2022-01-01")
 EXIT_SHORT = "half at target, rest on 20-EMA close"
@@ -259,6 +259,22 @@ def _news(idea: Idea, days: int = 10) -> None:
 # Micro caps are judged on the setup's record on micro caps alone (thinner, so lower
 # trade minimums), on the same scale as everything else, with a caution on top.
 MICRO_MIN_YEAR, MICRO_MIN_SIX = 15, 8
+# The live micro-cap record covers only today's liquid micro caps, so it flatters them
+# (survivors). The point-in-time test (every NSE micro cap, a trade counted only when it
+# traded Rs 25 crore+ on its own signal day, 2017-06 to 2026-11) is the judge: a setup
+# that lost money there is AVOID on a micro cap, whatever its recent record says.
+# (trades, R per trade after costs)
+MICRO_RESEARCH = {"breakout": (49, -0.10), "vcp": (171, -0.11), "flag": (671, -0.25), "ep": (169, -0.15),
+                  "crossback": (530, -0.11), "retest": (228, -0.22), "ct": (64, -0.39), "bbb": (161, -0.09)}
+
+
+def micro_research_avoid(strategy: str) -> str | None:
+    """The reason a micro cap is AVOID on this setup, or None when the setup made money."""
+    n, r = MICRO_RESEARCH.get(strategy, (0, 0.0))
+    if n and r <= 0:
+        return (f"on micro caps this setup lost {r:+.2f}R a trade over 2017-2026 "
+                f"({n} trades, liquidity checked on each signal day)")
+    return None
 MICRO_CAUTION = ("MICRO CAP caution: thin float, operator and circuit risk, the stop can gap "
                  "badly; use half the size you would use on a bigger stock")
 
@@ -306,6 +322,10 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict, mrec: 
     elif idea.strategy == "ep":
         bull.append(f"Episodic pivot: gapped {row['gap_pct']:.1f}% and closed {row['day_pct']:+.1f}% on "
                     f"{row['Volume'] / row['vol50']:.1f}x average volume: big news, big buyers.")
+    elif idea.strategy == "bbb":
+        bull.append(f"Buy before breakout: a pocket pivot ({row['Volume'] / row['down_v10']:.1f}x the biggest down-day "
+                    f"volume of 10 sessions) inside a 4+ week base, {(1 - row['Close'] / row['bbb_pivot']) * 100:.1f}% "
+                    f"under the pivot {row['bbb_pivot']:,.2f}.")
     elif idea.strategy in ("retest", "ct"):
         bull.append(f"Breakout + retest of the {S.RETEST_KINDS.get(int(row['rt_kind']), 'level')} at "
                     f"{row['rt_level']:,.2f}: broke it {row['rt_age']:.0f} sessions ago, "
@@ -361,6 +381,8 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict, mrec: 
     if micro:
         rec = mrec or {}
         grade = _grade(idea.strategy, rec, MICRO_MIN_YEAR, MICRO_MIN_SIX)
+        if micro_research_avoid(idea.strategy):
+            grade = "AVOID"
     else:
         grade = _grade(idea.strategy, rec)
     ud = row.get("ud_ratio")
@@ -375,7 +397,9 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict, mrec: 
         grade, reasons = "AVOID", [f"bad headlines ({idea.news_flag[10:]})"]
     else:
         where = "on micro caps" if micro else "across NSE"
-        if grade == "AVOID":
+        if micro and micro_research_avoid(idea.strategy):
+            reasons.append(micro_research_avoid(idea.strategy))
+        elif grade == "AVOID":
             reasons.append(f"this setup has lost money {where} over the last 6-12 months")
         elif grade == "OK":
             reasons.append(_record_reason(rec) + (" (micro-cap record)" if micro else ""))
@@ -524,7 +548,8 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
             if mf == "out":
                 continue  # money leaving (delivery % falling): the worst group in every period
             if sym in micro_inds:
-                grade = _grade(name, micro_records.get(name, {}), MICRO_MIN_YEAR, MICRO_MIN_SIX)
+                grade = ("AVOID" if micro_research_avoid(name)
+                         else _grade(name, micro_records.get(name, {}), MICRO_MIN_YEAR, MICRO_MIN_SIX))
             else:
                 grade = _grade(name, records[name])
             factor = 1.0 if grade == "GOOD" else 0.5

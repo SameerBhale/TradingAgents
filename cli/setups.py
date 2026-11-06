@@ -150,6 +150,17 @@ def render_multibagger(mb: dict) -> list[str]:
         out += ["", f"Plan: {mb['plan']}. {mb['note']}"]
     else:
         out.append("No stock passes every multibagger test yet; the list fills as stocks qualify.")
+    nxt = mb.get("next_in_line") or []
+    if nxt:
+        out += ["", "### Next in line - one test away (not on the list; joins when the missing test passes)", "",
+                "| Stock | Cap | Mcap (Rs cr) | Missing test | ROE | Sales / Profit 3y | PEG | Promoter (pledged) |",
+                "|---|---|---|---|---|---|---|---|"]
+        for n in nxt:
+            out.append(f"| {_short_name(n['name'])} ({n['symbol'].removesuffix('.NS')}) | {n['cap']} | "
+                       f"{n['mcap_cr'] or 0:,.0f} | {n['missing']} | {n['roe_pct']}% | "
+                       f"{n['sales_cagr_pct']}% / {n['profit_cagr_pct']}% | {n['peg'] if n['peg'] is not None else '-'} | "
+                       f"{n['promoter_pct'] if n['promoter_pct'] is not None else '-'}% "
+                       f"({n['pledged_pct'] if n['pledged_pct'] is not None else '-'}%) |")
     for x in mb.get("removed_recent", [])[-3:]:
         out.append(f"\nRemoved {x['symbol'].removesuffix('.NS')} on {x['removed_on']} at {x['removed_price']:,.2f} "
                    f"(added {x['added_on']} at {x['added_price']:,.2f}): {x['reason']}.")
@@ -157,11 +168,12 @@ def render_multibagger(mb: dict) -> list[str]:
 
 
 SHORT_SETUP = {"breakout": "52w breakout", "vcp": "VCP", "flag": "Q-flag", "ep": "Episodic pivot",
-               "crossback": "EMA crossback", "retest": "BO+retest", "ct": "CT+retest"}
+               "crossback": "EMA crossback", "retest": "BO+retest", "ct": "CT+retest", "bbb": "Buy before BO"}
 
 
 def _short_name(name: str) -> str:
-    for w in (" Limited", " Ltd.", " Ltd", " Industries", " International", " Technologies", " Enterprises"):
+    for w in (" Limited", " LIMITED", " Ltd.", " LTD.", " Ltd", " LTD", " Industries", " International",
+              " Technologies", " Enterprises"):
         name = name.replace(w, "")
     return name.strip()
 

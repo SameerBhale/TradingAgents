@@ -62,6 +62,7 @@ entry (no fill, no trade):
 | Episodic pivot | Kristjan Kullamagi | a 3%+ gap and 6%+ day on 3x volume after news, closing strong, above the 200-DMA |
 | Kell EMA crossback | Oliver Kell, US Investing Champion 2020 (+941%) | a stage-2 leader dips to its 20 EMA and closes back above the 10 EMA and the prior high |
 | Breakout + retest | supply-zone flip (Indian price-action practice, e.g. Apoorv Dubey); cup and handle (O'Neil); ascending triangle (Bulkowski) | a fresh breakout of a horizontal level (all-time high, 52-week high, flag and pole, ascending triangle, or cup-and-handle / base rim) after 20+ sessions under it, on 1.5x volume, a 4%+ move above it, a lighter-volume pullback that tests the level (within 3%) and holds it (no close 3%+ under), then a bounce over the prior day's high; stage-2 trend |
+| Buy before breakout | @VCPSwing ("Buy Before Breakout") on X; pocket pivots (Morales & Kacher) | a stage-2 leader (Trend Template, RS >= 70) in a base of 4+ weeks (the 60-session high set 20+ sessions ago), 0-8% under that pivot, prints a pocket pivot (an up day on volume above every down day's volume of the prior 10 sessions, closing above the 10-EMA), not 30%+ above the 50-EMA nor 6%+ under the 50-DMA; buy-stop above the day, stop under its low |
 | CT breakout + retest | counter-trendline break (Indian price-action practice) | the same retest after a close through a falling line from the year's highest swing high through the lower swing highs after it; a reversal, so it needs only the 50-DMA |
 
 **Verdict scale** (added 2026-11-06): GOOD is split by three checks that successful
@@ -158,6 +159,38 @@ What this means:
 Champion returns of several hundred percent came from concentrated, often leveraged,
 discretionary trading, with a few huge winners ridden for months. The mechanical
 versions above keep the entries and the risk control, and earn a small edge per trade.
+
+**10-year out-of-sample test (2026-11-06)**: 2,000+ NSE stocks, June 2017 to Nov 2026,
+10,084 trades, money filter off (NSE delivery history starts 2021), demerger jumps dropped.
+R per trade after costs; in-sample 2017-22 vs out-of-sample 2023-26:
+
+| Setup | 2017-20 | 2021-22 | 2023-24 | 2025-26 |
+|---|---|---|---|---|
+| 52-week breakout | +0.03 | +0.05 | +0.50 | +0.04 |
+| Minervini VCP | +0.13 | +0.33 | +0.39 | +0.06 |
+| Qullamaggie flag | +0.24 | +0.05 | +0.35 | -0.06 |
+| Episodic pivot | +0.19 | -0.03 | +0.52 | +0.10 |
+| Kell crossback | +0.21 | +0.13 | +0.41 | -0.12 |
+| Retest: all-time high + flag and pole (traded) | +0.27 | +0.11 | +0.66 | +0.00 |
+| Retest: 52-week high, triangle, cup/base (dropped) | -0.23 | +0.29 | -0.03 | -0.38 |
+| CT + retest | +0.18 | -0.45 | +0.71 | -0.33 |
+
+- **Buy before breakout (@VCPSwing)**, same test: 945 trades, +0.15R (40% won):
+  +0.10 / +0.16 / +0.25 / +0.05R, positive in every period including 2025-26. His
+  "Alpha (vs the Nifty MidSmallcap 400) at a new high before price" trigger was tested
+  and dropped: with it, 85 trades, +0.09 / -0.15 / +0.77 / -0.07R; the indicator's exact
+  formula is protected, so this is our reading of it. Micro caps: -0.09R (161 trades).
+- **Market filter (breadth)**: rejected. No breadth bucket was better in every period
+  (2017-20: under 40% breadth +0.15R, 50-60% -0.15R; 2025-26: every bucket -0.11 to +0.15R).
+- **BETTER / BEST checks**: kept. RS rank >= 80 together with up/down volume >= 1.2 beat
+  the rest in 3 of 4 periods, including 2025-26 (+0.04R vs -0.15R).
+- **Sector strength**: rejected as a check. Leading sectors did better in 2017-22
+  (+0.20R vs +0.10R) and worse in 2023-26 (+0.19R vs +0.31R).
+- **Micro caps, point in time** (every NSE micro cap; a trade counts only if the stock
+  traded Rs 25 crore+ on its own signal day): every setup lost, -0.16R in 2017-22 and
+  -0.21R in 2023-26 (breakout -0.10R, VCP -0.11R, flag -0.25R, EP -0.15R, crossback
+  -0.11R, retest -0.22R, CT -0.39R). The live micro record (today's liquid names only)
+  was survivor-biased, so micro caps are AVOID on every swing setup until this changes.
 
 ## B2. Value buys (medium to long term)
 

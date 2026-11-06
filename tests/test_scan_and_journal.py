@@ -316,7 +316,11 @@ def test_breakout_retest_signal_and_plan():
     ind = S.indicators(_retest_frame())
     row = ind.iloc[-1]
     assert row["rt_level"] == pytest.approx(97 * 1.005, abs=0.01)
-    assert row["rt_age"] == 6
+    assert row["rt_age"] == 6 and row["rt_kind"] == 2
+    # A 52-week-high retest is detected but not traded (it lost out of sample): with the
+    # kind switched to a traded one (all-time high), the same bars signal.
+    assert not bool(S.signals("retest", ind, None).iloc[-1])
+    ind.loc[ind.index[-1], "rt_kind"] = 1.0
     assert bool(S.signals("retest", ind, None).iloc[-1])
     assert not S.signals("retest", ind, None).iloc[-2]  # the retest bar itself is not the trigger
     s = S.setup_for("retest", row)
@@ -401,3 +405,33 @@ def test_micro_rs_rank_does_not_move_the_core_ranks():
     S.add_rs_rank({"A": strong, "B": weak}, {"M": micro})
     assert (strong["rs_rank"].iloc[-1], weak["rs_rank"].iloc[-1]) == before
     assert weak["rs_rank"].iloc[-1] < micro["rs_rank"].iloc[-1] < 99
+
+
+@pytest.mark.unit
+def test_micro_caps_follow_the_point_in_time_research():
+    assert D.micro_research_avoid("flag")           # lost money on micro caps, 2017-2026
+    assert "2017-2026" in D.micro_research_avoid("vcp")
+    assert D.micro_research_avoid("unknown") is None
+
+
+def _bbb_frame():
+    """A stage-2 run, a 30-session base under its high, then a pocket pivot inside the base."""
+    closes = list(np.linspace(100, 200, 270))                              # the advance
+    closes += [196, 192, 189, 191, 194, 190, 188, 186, 189, 192] * 3       # a base under ~201
+    df = _frame(closes, vol=2e6)
+    df.iloc[-25:, df.columns.get_loc("Volume")] = 1.2e6                    # quiet base
+    bar = pd.DataFrame([[190.0, 195.0, 189.5, 194.5, 3e6]], columns=df.columns,
+                       index=[df.index[-1] + pd.offsets.BDay(1)])         # the pocket pivot
+    return pd.concat([df, bar])
+
+
+@pytest.mark.unit
+def test_buy_before_breakout_on_a_pocket_pivot_in_a_base():
+    ind = S.indicators(_bbb_frame())
+    row = ind.iloc[-1]
+    assert row["bbb_pivot"] == pytest.approx(200 * 1.005, rel=0.01)
+    assert row["Close"] < row["bbb_pivot"] and row["Volume"] > row["down_v10"]
+    assert bool(S.signals("bbb", ind, None).iloc[-1])
+    s = S.setup_for("bbb", row)
+    assert s.entry == pytest.approx(195.0 * 1.001, abs=0.01)
+    assert s.entry * 0.90 - 0.01 <= s.stop <= s.entry * 0.95 + 0.01

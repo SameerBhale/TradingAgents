@@ -2,8 +2,9 @@
 name: trade-setups
 description: >-
   NSE trade list: top 5 swing setups (stop 5-10%, target 10-20% for half, rest trailed on
-  the 20 EMA, no time limit) from seven strategies (52-week breakout, Minervini VCP,
-  Qullamaggie flag and episodic pivot, Kell EMA crossback, breakout + retest, CT + retest)
+  the 20 EMA, no time limit) from eight strategies (52-week breakout, Minervini VCP,
+  Qullamaggie flag and episodic pivot, Kell EMA crossback, breakout + retest, CT + retest,
+  @VCPSwing buy before breakout)
   and top 3 value buys (3-12 months), with BEST / BETTER / GOOD / OK / AVOID verdicts; liquid
   micro caps included with a caution. No money or quantity. Use for /trade-setups,
   /trade-setup, "setups", "what to buy", "swing setups", "value buy", "how long to hold".

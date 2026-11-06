@@ -68,6 +68,8 @@ BREAK_PLEDGE = 50.0
 # The story is broken: drop it from the list.
 BREAK_ROE, BREAK_SALES_CAGR, BREAK_DE, BREAK_DRAWDOWN = 0.12, 8.0, 100.0, 35.0
 
+NEXT_IN_LINE = 10   # near misses shown under the list
+
 PLAN = ("buy in 3 parts over 3-6 months, near the 50-day average; review every quarterly "
         "result; sell only when the story breaks (REMOVED)")
 
@@ -327,7 +329,18 @@ def update(md: MarketData, today: date | None = None, path: str | None = None) -
                                                   "up_years_5", "history", "fcf_positive", "chart", "score")}})
     order = {"NEW": 0, "HOLD": 1, "REVIEW": 2}
     rows.sort(key=lambda r: (order.get(r["status"], 3), -(r["score"] or 0)))
-    return {"as_of": stamp, "rows": rows, "added": added, "removed": removed,
+    # Next in line: not on the list and failing exactly one test (the one it needs to pass).
+    nxt = []
+    for sym, res in results.items():
+        if sym in active or len(res["fails"]) != 1 or res["broken"]:
+            continue
+        sec = md.securities.get(sym)
+        nxt.append({"symbol": sym, "name": sec.name if sec else sym, "cap": india.cap_class(sym),
+                    "missing": res["fails"][0], "close": res["close"],
+                    **{k: res.get(k) for k in ("mcap_cr", "roe_pct", "sales_cagr_pct", "profit_cagr_pct", "peg",
+                                                "promoter_pct", "pledged_pct", "score")}})
+    nxt.sort(key=lambda r: -(r["score"] or 0))
+    return {"as_of": stamp, "rows": rows, "next_in_line": nxt[:NEXT_IN_LINE], "added": added, "removed": removed,
             "removed_recent": data["removed"][-5:], "screened": len(pool), "checked": len(shortlist),
             "passed": sum(1 for r in results.values() if r["passes"]), "plan": PLAN,
             "note": "Not backtested and not a promise: a long-term watch list built from the SQGLP / "
