@@ -59,7 +59,7 @@ def build(top: int = 5, value_top: int = 3, refresh: bool = False, no_news: bool
 def value_verdict(v: dict) -> str:
     concerns = []
     if v.get("cap") == "Micro":
-        concerns.append("MICRO CAP, extra caution: thin float, operator risk, weaker free data; small size only")
+        concerns.append("MICRO CAP caution: thin float, operator risk, weaker free data; half size")
     if v.get("cap") == "Small":
         concerns.append("small cap: bigger swings")
     if (v.get("earnings_growth_pct") or 0) > 100:
@@ -177,9 +177,10 @@ def render_markdown(r: dict) -> str:
                        f"{p['action']} | {p['stop']:,.2f} (-15%) | {p['review_on']} |")
     out += [
         "",
-        "Verdicts: **GOOD** take it; **OK** one risk to respect, half size; **AVOID** the setup is losing money "
-        "across NSE lately or the news is bad. **MICRO CAP** rows are never GOOD and are judged on the setup's "
-        "record on micro caps alone; quarter size at most. Money flow: delivery % trend (20-day vs 100-day average); IN is "
+        "Verdicts, best first: **BEST** GOOD plus all three extra checks (success rate 40%+, volume building up, "
+        "RS leader); **BETTER** two of them; **GOOD** take it; **OK** one risk to respect, half size; **AVOID** the "
+        "setup is losing money lately or the news is bad. **MICRO CAP** rows use the same scale on the setup's "
+        "micro-cap record, at half the size you would use on a bigger stock. Money flow: delivery % trend (20-day vs 100-day average); IN is "
         "1.05x or more, money OUT setups are dropped. Swing entry: a stop-limit buy (trigger = buy above, "
         "limit = max) before 09:15; after the fill, a GTT OCO with the stoploss and the target for HALF the "
         "shares. When the target fills, move the stop on the rest to your buy price and sell it on a close below "
