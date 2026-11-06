@@ -9,8 +9,8 @@
 
 Micro caps trading Rs 25 crore+ a day are included (`--no-micro` leaves them out); they
 are never GOOD and their verdict starts with a MICRO CAP caution.
-3. MULTIBAGGER CANDIDATES (3-5 years): a watch list kept in ~/.tradingagents/multibaggers.json
-   that grows as stocks qualify (SQGLP / 100-bagger traits); `--no-multibagger` skips it.
+The 3-5 year MULTIBAGGER CANDIDATES list has its own command (`tradingagents multibagger`,
+/multibagger); here value picks already on that saved list are only tagged.
 `--with-core` adds the momentum core portfolio. Every call is logged for
 `tradingagents calls review`.
 """
@@ -37,7 +37,7 @@ def _held_momentum() -> dict[str, float]:
 
 def build(top: int = 5, value_top: int = 3, refresh: bool = False, no_news: bool = False,
           with_core: bool = False, mode: str = "balanced", progress=None, micro: bool = True,
-          multibagger: bool = True) -> dict:
+          multibagger: bool = False) -> dict:
     from tradingagents import calls
     from tradingagents.scanner import data as data_mod
     from tradingagents.scanner.daily import run_daily
@@ -46,12 +46,11 @@ def build(top: int = 5, value_top: int = 3, refresh: bool = False, no_news: bool
     md = data_mod.load(refresh=refresh, progress=progress, with_micro=micro)
     swing = run_daily(capital=_NOMINAL_CAPITAL, risk_pct=1.0, top=top, with_news=not no_news, md=md)
     value = value_picks(md, top=value_top, with_news=not no_news) if value_top else {"picks": []}
-    mb = {"rows": []}
-    if multibagger:
-        from tradingagents.scanner.multibagger import update as mb_update
+    from tradingagents.scanner import multibagger as MB
 
-        mb = mb_update(md)
-    tagged = {r["symbol"] for r in mb["rows"]}
+    mb = MB.update(md) if multibagger else {"rows": []}
+    # Tag value picks from the saved list (no fetching) when the list is not refreshed here.
+    tagged = {r["symbol"] for r in mb["rows"]} if multibagger else MB.active_symbols()
     for v in value["picks"]:
         v["verdict"] = value_verdict(v)
         v["multibagger_candidate"] = v["symbol"] in tagged
@@ -63,7 +62,7 @@ def build(top: int = 5, value_top: int = 3, refresh: bool = False, no_news: bool
 
         core = core_picks(md, _NOMINAL_CAPITAL, _held_momentum(), mode=mode)
     r = {"as_of": str(md.last), "settled": str(md.settled), "swing": swing, "value": value, "core": core,
-         "mode": mode, "multibagger": mb}
+         "mode": mode, "multibagger": mb, "sources": getattr(md, "sources", {})}
     r["new_calls_logged"] = calls.record(r)
     return r
 
@@ -116,6 +115,47 @@ def _record(i: dict, records: dict, micro_records: dict | None = None) -> str:
     return f"{rec['win_rate']:.0f}% won, {rec['expectancy_r']:+.2f}R"
 
 
+def _sources_line(src: dict) -> str:
+    if not src:
+        return ""
+    parts = [f"Upstox {src.get('upstox', 0)}", f"Yahoo {src.get('yahoo', 0)}"]
+    if src.get("nse_patched"):
+        parts.append(f"{src['nse_patched']} filled from NSE bhavcopy")
+    parts.append(f"{src.get('nse_corrected', 0)} latest closes corrected to NSE's")
+    return "Prices: " + ", ".join(parts) + ". Fundamentals: NSE XBRL filings + Yahoo."
+
+
+def render_multibagger(mb: dict) -> list[str]:
+    """The MULTIBAGGER CANDIDATES table (from multibagger.update)."""
+    out: list[str] = []
+    out += ["", f"## MULTIBAGGER CANDIDATES - long term watch list (3-5 years; {len(mb['rows'])} on the list)", "",
+            f"Screened {mb['screened']} stocks, {mb['checked']} checked in depth, {mb['passed']} pass every test today. "
+            f"New: {', '.join(x.removesuffix('.NS') for x in mb['added']) or 'none'}. "
+            f"Removed: {', '.join(x.removesuffix('.NS') for x in mb['removed']) or 'none'}.", ""]
+    if mb["rows"]:
+        out += ["| Status | Name | Ticker | Cap | Mcap (Rs cr) | Added on | Added at | Now | Since added | ROE | "
+                "Sales 3y / 5y CAGR | Profit 3y CAGR | Debt/equity | Promoter (pledged) | P/E (PEG) | History | Note |",
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for m in mb["rows"]:
+            pe = f"{m['pe']} ({m['peg']})" if m.get("pe") else "-"
+            out.append(
+                f"| **{m['status']}** | {m['name']} | {m['symbol'].removesuffix('.NS')} | {m['cap']} | "
+                f"{m['mcap_cr'] or 0:,.0f} | {m['added_on']} | {m['added_price']:,.2f} | {m['close']:,.2f} | "
+                f"{m['since_added_pct']:+.1f}% | {m['roe_pct']}% | {m['sales_cagr_pct']}% / "
+                f"{m.get('sales_5y_cagr_pct') if m.get('sales_5y_cagr_pct') is not None else '-'}% | "
+                f"{m['profit_cagr_pct']}% | {m['de_pct']}% | "
+                f"{m['promoter_pct'] if m['promoter_pct'] is not None else '-'}% "
+                f"({m.get('pledged_pct') if m.get('pledged_pct') is not None else '-'}%) | {pe} | "
+                f"{m.get('history') or '-'} | {m['note'] or m['chart']} |")
+        out += ["", f"Plan: {mb['plan']}. {mb['note']}"]
+    else:
+        out.append("No stock passes every multibagger test yet; the list fills as stocks qualify.")
+    for x in mb.get("removed_recent", [])[-3:]:
+        out.append(f"\nRemoved {x['symbol'].removesuffix('.NS')} on {x['removed_on']} at {x['removed_price']:,.2f} "
+                   f"(added {x['added_on']} at {x['added_price']:,.2f}): {x['reason']}.")
+    return out
+
+
 def render_markdown(r: dict) -> str:
     swing, value = r["swing"], r.get("value", {"picks": []})
     m = swing["market"]
@@ -126,6 +166,7 @@ def render_markdown(r: dict) -> str:
         f"Nifty 50 {m['nifty']:,} ({trend} its 200-DMA {m['nifty_sma200']:,}; 50-DMA {m['nifty_sma50']:,}) | "
         f"{m['breadth_pct']:.0f}% of stocks above their 200-DMA | scanned {swing.get('scanned', 0)} large/mid/small "
         f"+ {swing.get('micro_scanned', 0)} liquid micro caps",
+        _sources_line(r.get("sources") or {}),
         *[f"> {n}" for n in swing["notes"]],
         "",
         f"## SWING - top {len(swing['ideas'])} (short term: days to weeks; stop 5-10%, target 10-20%, "
@@ -181,30 +222,8 @@ def render_markdown(r: dict) -> str:
                            " | ".join(f"{n['when']}: {n['title']}" for n in v["concall"][:3]))
     else:
         out.append(value.get("note", "No value pick today."))
-    mb = r.get("multibagger") or {}
-    if mb.get("rows") is not None and "screened" in mb:
-        out += ["", f"## MULTIBAGGER CANDIDATES - long term watch list (3-5 years; {len(mb['rows'])} on the list)", "",
-                f"Screened {mb['screened']} stocks, {mb['checked']} checked in depth, {mb['passed']} pass every test today. "
-                f"New: {', '.join(x.removesuffix('.NS') for x in mb['added']) or 'none'}. "
-                f"Removed: {', '.join(x.removesuffix('.NS') for x in mb['removed']) or 'none'}.", ""]
-        if mb["rows"]:
-            out += ["| Status | Name | Ticker | Cap | Mcap (Rs cr) | Added on | Added at | Now | Since added | ROE | "
-                    "Sales 3y CAGR | Profit 3y CAGR | Debt/equity | Promoter | P/E (PEG) | Note |",
-                    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
-            for m in mb["rows"]:
-                pe = f"{m['pe']} ({m['peg']})" if m.get("pe") else "-"
-                out.append(
-                    f"| **{m['status']}** | {m['name']} | {m['symbol'].removesuffix('.NS')} | {m['cap']} | "
-                    f"{m['mcap_cr'] or 0:,.0f} | {m['added_on']} | {m['added_price']:,.2f} | {m['close']:,.2f} | "
-                    f"{m['since_added_pct']:+.1f}% | {m['roe_pct']}% | {m['sales_cagr_pct']}% | {m['profit_cagr_pct']}% | "
-                    f"{m['de_pct']}% | {m['promoter_pct'] if m['promoter_pct'] is not None else '-'}% | {pe} | "
-                    f"{m['note'] or m['chart']} |")
-            out += ["", f"Plan: {mb['plan']}. {mb['note']}"]
-        else:
-            out.append("No stock passes every multibagger test yet; the list fills as stocks qualify.")
-        for x in mb.get("removed_recent", [])[-3:]:
-            out.append(f"\nRemoved {x['symbol'].removesuffix('.NS')} on {x['removed_on']} at {x['removed_price']:,.2f} "
-                       f"(added {x['added_on']} at {x['added_price']:,.2f}): {x['reason']}.")
+    if (r.get("multibagger") or {}).get("screened") is not None:
+        out += render_multibagger(r["multibagger"])
     if r.get("core", {}).get("picks"):
         out += ["", "## CORE - momentum portfolio (monthly review)", "",
                 "| # | Name | Ticker | Cap | Action | Stoploss | Review |", "|---|---|---|---|---|---|---|"]
@@ -227,7 +246,7 @@ def render_markdown(r: dict) -> str:
 
 def setups_command(top: int, value_top: int, refresh: bool, as_json: bool, markdown: bool, no_news: bool,
                    with_core: bool = False, mode: str = "balanced", micro: bool = True,
-                   multibagger: bool = True) -> int:
+                   multibagger: bool = False) -> int:
     def progress(done, total):
         if not (as_json or markdown):
             console.print(f"[dim]Downloading daily bars {done}/{total}...[/dim]")
@@ -298,3 +317,32 @@ def allocate(amount: float, kind: str, picks: list[int] | None, risk: float) -> 
     used = sum(x["capital"] for x in rows)
     return {"as_of": r["as_of"], "amount": amount, "for": kind, "rows": rows, "capital_used": used,
             "cash_left": round(amount - used), "max_total_loss": sum(x["max_loss"] for x in rows)}
+
+
+def multibagger_command(as_json: bool = False, markdown: bool = False, refresh: bool = False,
+                        micro: bool = True) -> int:
+    """`tradingagents multibagger`: update the 3-5 year candidate list and show it."""
+    from tradingagents.scanner import data as data_mod
+    from tradingagents.scanner.multibagger import update
+
+    def progress(done, total):
+        if not (as_json or markdown):
+            console.print(f"[dim]Downloading daily bars {done}/{total}...[/dim]")
+
+    md = data_mod.load(refresh=refresh, progress=progress, with_micro=micro)
+    mb = update(md)
+    text = "\n".join([f"# Multibagger candidates - {mb['as_of']} close", _sources_line(getattr(md, "sources", {})),
+                      *render_multibagger(mb)])
+    stem = os.path.join(scans_dir(), f"multibagger-{mb['as_of']}")
+    with open(stem + ".json", "w", encoding="utf-8") as fh:
+        json.dump(mb, fh, indent=1, default=float)
+    with open(stem + ".md", "w", encoding="utf-8") as fh:
+        fh.write(text)
+    if as_json:
+        print(json.dumps(mb, indent=1, default=float))
+    elif markdown:
+        print(text)
+    else:
+        console.print(Markdown(text))
+        console.print(f"[dim]Saved: {stem}.md[/dim]")
+    return 0

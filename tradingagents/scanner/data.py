@@ -1,14 +1,24 @@
-"""One daily download serves every scan: large/mid/small-cap stocks, liquid ETFs and the Nifty."""
+"""One daily download serves every scan: large/mid/small-cap stocks, liquid ETFs and the Nifty.
+
+Price sources, in order (``TRADINGAGENTS_PRICE_SOURCE=yahoo`` uses Yahoo alone):
+
+1. Upstox's public candle API (split/bonus-adjusted, no key needed): the main source.
+2. Yahoo Finance for any symbol Upstox returns nothing (or too little history) for.
+3. NSE's bhavcopy, the exchange's own record: fills sessions both lag and cross-checks
+   the latest close (a bar more than 1% off NSE's close is replaced by NSE's).
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
 
+import os
+
 import pandas as pd
 
 from tradingagents.dataflows import india
-from tradingagents.dataflows.vendors import nse_bhav
+from tradingagents.dataflows.vendors import nse_bhav, upstox
 from tradingagents.dataflows.vendors.yahoo.bulk import download_daily
 
 NIFTY = "^NSEI"
@@ -27,6 +37,72 @@ class MarketData:
     # Liquid micro caps (below the top 500), kept apart: they never enter the momentum
     # core, the market breadth or the RS rank, and the swing/value verdicts caution them.
     micro: dict[str, pd.DataFrame] = field(default_factory=dict)
+    sources: dict[str, int] = field(default_factory=dict)   # bars by source, for the report
+
+
+def price_source() -> str:
+    return os.getenv("TRADINGAGENTS_PRICE_SOURCE", "upstox").strip().lower()
+
+
+CROSSCHECK_PCT = 1.0
+
+
+def fetch_prices(secs: dict[str, india.IndianSecurity], settled: date, refresh: bool = False,
+                 progress=None, nifty: bool = False) -> tuple[dict[str, pd.DataFrame], dict[str, int]]:
+    """Daily bars for ``secs`` (and the Nifty), Upstox first, then Yahoo, then NSE's bhavcopy.
+    Returns the frames and how many symbols came from each source."""
+    stamp = settled.isoformat()
+    raw: dict[str, pd.DataFrame] = {}
+    used = {"upstox": 0, "yahoo": 0, "nse_patched": 0, "nse_corrected": 0}
+    if price_source() == "upstox":
+        keys = {sym: upstox.equity_key(sec.isin) for sym, sec in secs.items() if sec.isin}
+        if nifty:
+            keys[NIFTY] = upstox.NIFTY_KEY
+        try:
+            got = upstox.download_daily(keys, years=5, stamp=stamp, progress=progress, refresh=refresh)
+        except Exception:  # Upstox down: Yahoo carries the whole run
+            got = {}
+        raw = {k: v for k, v in got.items() if len(v) > 260}
+        used["upstox"] = len(raw)
+    rest = [s for s in secs if s not in raw] + ([NIFTY] if nifty and NIFTY not in raw else [])
+    if rest:
+        yahoo = download_daily(rest, period="5y", stamp=stamp, progress=progress, refresh=refresh,
+                               probe=NIFTY if NIFTY in rest else None)
+        used["yahoo"] = sum(1 for s in yahoo if s != NIFTY)
+        raw.update(yahoo)
+    # Sessions some frames lack (either source can lag a day): fill them from NSE.
+    lasts = [d.index[-1].date() for d in raw.values() if len(d)]
+    if lasts:
+        day, missing = min(lasts), []
+        while (day := india.next_trading_day(day)) <= settled and len(missing) < 5:
+            missing.append(day)
+        if missing:
+            before = {s: len(d) for s, d in raw.items()}
+            nse_bhav.patch(raw, missing, NIFTY)
+            used["nse_patched"] = sum(1 for s, d in raw.items() if len(d) > before.get(s, 0))
+    used["nse_corrected"] = _crosscheck(raw, settled)
+    return raw, used
+
+
+def _crosscheck(frames: dict[str, pd.DataFrame], day: date) -> int:
+    """Replace a latest bar more than CROSSCHECK_PCT off NSE's own close. Returns how many."""
+    try:
+        bars = nse_bhav.equity_bars(day)
+    except Exception:
+        return 0
+    if not bars:
+        return 0
+    ts, fixed = pd.Timestamp(day), 0
+    for sym, df in frames.items():
+        bar = bars.get(sym.removesuffix(".NS"))
+        if bar is None or ts not in df.index or not bar[3]:
+            continue
+        close = df.at[ts, "Close"]
+        if close == close and abs(close / bar[3] - 1) * 100 <= CROSSCHECK_PCT:
+            continue
+        df.loc[ts, ["Open", "High", "Low", "Close", "Volume"]] = list(bar)
+        fixed += 1
+    return fixed
 
 
 def stock_universe() -> dict[str, india.IndianSecurity]:
@@ -84,18 +160,9 @@ def load(refresh: bool = False, progress=None, as_of: date | None = None,
          with_micro: bool = False) -> MarketData:
     stocks_u, etfs_u = stock_universe(), etf_universe()
     settled = india.market_status().last_completed_session
-    raw = download_daily(
-        list(stocks_u) + list(etfs_u) + [NIFTY], period="5y", stamp=settled.isoformat(),
-        progress=progress, refresh=refresh, probe=NIFTY,
-    )
+    raw, sources = fetch_prices({**stocks_u, **etfs_u}, settled, refresh, progress, nifty=True)
     if NIFTY not in raw:
-        raise RuntimeError("Yahoo returned no Nifty 50 data; try again shortly with --refresh.")
-    # Yahoo lagging (or a row with volume but no prices): fill the gap from NSE's bhavcopy.
-    missing, day = [], raw[NIFTY].index[-1].date()
-    while (day := india.next_trading_day(day)) <= settled and len(missing) < 5:
-        missing.append(day)
-    if missing:
-        nse_bhav.patch(raw, missing, NIFTY)
+        raise RuntimeError("No Nifty 50 data from Upstox or Yahoo; try again shortly with --refresh.")
     cut = pd.Timestamp(min(as_of, settled) if as_of else settled)
     nifty = raw.pop(NIFTY)
     nifty = nifty[nifty.index <= cut]
@@ -104,12 +171,12 @@ def load(refresh: bool = False, progress=None, as_of: date | None = None,
     etfs = {s: d for s, d in clip.items() if s in etfs_u and len(d) > 260}
     micro, micro_u = {}, {}
     if with_micro:
-        micro, micro_u = _load_micro(settled, missing, cut, refresh, progress)
+        micro, micro_u = _load_micro(settled, cut, refresh, progress, sources)
     return MarketData(stocks, etfs, nifty, settled, nifty.index[-1].date(),
-                      {**stocks_u, **etfs_u, **micro_u}, micro)
+                      {**stocks_u, **etfs_u, **micro_u}, micro, sources)
 
 
-def _load_micro(settled: date, missing: list[date], cut: pd.Timestamp, refresh: bool, progress):
+def _load_micro(settled: date, cut: pd.Timestamp, refresh: bool, progress, sources: dict):
     """Liquid micro caps, downloaded on their own (so the main cache is untouched)."""
     try:
         micro_u = micro_universe(settled)
@@ -117,10 +184,9 @@ def _load_micro(settled: date, missing: list[date], cut: pd.Timestamp, refresh: 
         return {}, {}
     if not micro_u:
         return {}, {}
-    raw = download_daily(list(micro_u), period="5y", stamp=settled.isoformat(),
-                         progress=progress, refresh=refresh)
-    if missing:
-        nse_bhav.patch(raw, missing, NIFTY)
+    raw, used = fetch_prices(micro_u, settled, refresh, progress)
+    for k, v in used.items():
+        sources[k] = sources.get(k, 0) + v
     out = {}
     for s, d in raw.items():
         d = d[d.index <= cut]

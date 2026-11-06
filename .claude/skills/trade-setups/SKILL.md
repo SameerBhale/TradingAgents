@@ -31,20 +31,18 @@ core portfolio only when the user asks for it. Missing Yahoo sessions are filled
 NSE's bhavcopy (published around 18:00 IST); if the header date is older than the
 last session, say so and re-run with `--refresh` after 18:00.
 
+Data: prices from Upstox (Yahoo as fallback, NSE bhavcopy fills and corrects the latest
+close); fundamentals from NSE XBRL filings + Yahoo; promoter holding and pledge from NSE.
+The header's "Prices:" line says how many came from each. Stocks with a 40%+ one-day jump
+(a demerger or unadjusted split) in the last year are skipped by the swing scan.
+
 ## 2. Show
 
 The header line and notes, then the tables exactly as printed: **SWING** (short term),
 **MONEY FLOW** (watch list: stage-2 leaders where delivery % is rising, plus today's
-institutional bulk/block deals; not buy signals), **VALUE** (medium to long term) and
-**MULTIBAGGER CANDIDATES** (3-5 years). The candidate list is saved in
-`~/.tradingagents/multibaggers.json` and grows: each run adds stocks that pass every
-SQGLP / 100-bagger test (Rs 500-30,000 cr market cap, ROE >= 18%, debt/equity <= 50%,
-margin >= 12%, cash flow positive, 3-year sales CAGR >= 15% and profit CAGR >= 20%, sales up
-every year, P/E <= 60, PEG <= 1.5, above a rising 200-DMA). Status: NEW (added today), HOLD
-(still passes), REVIEW (one test failing, reason shown), REMOVED (the story broke: ROE < 12%,
-sales growth < 8%, debt/equity > 100%, or 35% under the added price and below the 200-DMA).
-Plan: buy in 3 parts over 3-6 months near the 50-DMA, review every quarterly result, sell
-only on REMOVED. A value pick that is also on the list carries the tag. Not backtested. Do not add capital, money, quantity or sizing
+institutional bulk/block deals; not buy signals) and **VALUE** (medium to long term). A
+value pick already on the saved multibagger list is tagged [MULTIBAGGER CANDIDATE]; the
+list itself is shown only by /multibagger (do not run it here). Do not add capital, money, quantity or sizing
 columns, and do not ask how much the user wants to invest.
 
 Verdicts, in plain words, best first (the `tier` field; `grade` stays GOOD/OK/AVOID):

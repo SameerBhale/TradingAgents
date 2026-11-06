@@ -533,8 +533,29 @@ def run_exit(o, h, low, c, ema20, e: int, entry: float, stop: float, target: flo
     return gross, b[1], "target/" + ("breakeven" if b[2] == "stop" else "trail")
 
 
+# A one-day move this big is almost always a corporate action the data did not adjust for
+# (a demerger, or an unadjusted split): NSE's circuit limits are 20% for most stocks.
+JUMP_PCT = 40.0
+
+
+def jumps(o: np.ndarray, c: np.ndarray) -> np.ndarray:
+    """True on bars whose open or close is JUMP_PCT+ away from the previous close."""
+    prev = np.roll(c, 1)
+    prev[0] = np.nan
+    with np.errstate(divide="ignore", invalid="ignore"):
+        big = (np.abs(c / prev - 1) * 100 >= JUMP_PCT) | (np.abs(o / prev - 1) * 100 >= JUMP_PCT)
+    return np.nan_to_num(big, nan=0).astype(bool)
+
+
+def has_jump(df: pd.DataFrame, bars: int = 260) -> bool:
+    """A corporate-action jump in the last ``bars`` sessions: its averages and highs are unreliable."""
+    tail = df.iloc[-bars:]
+    return bool(jumps(tail["Open"].to_numpy(dtype=float), tail["Close"].to_numpy(dtype=float)).any())
+
+
 def simulate(ind: pd.DataFrame, i: int, s: Setup, arrays) -> dict | None:
-    """Replay one setup from signal bar ``i``. None: no fill, skipped, or still open."""
+    """Replay one setup from signal bar ``i``. None: no fill, skipped, still open, or the
+    trade spans a corporate-action jump (its result would be an artifact)."""
     o, h, low, c, ema20 = arrays
     n = len(o)
     e = i + 1
@@ -551,6 +572,8 @@ def simulate(ind: pd.DataFrame, i: int, s: Setup, arrays) -> dict | None:
     if res is None:
         return None
     gross, j, outcome = res
+    if jumps(o[max(i - 260, 0): j + 1], c[max(i - 260, 0): j + 1]).any():
+        return None  # the signal or the trade sits on unadjusted data
     net = gross - COST_PCT / 100
     t_hit = None
     if outcome.startswith("target"):

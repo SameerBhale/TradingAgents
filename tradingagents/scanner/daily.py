@@ -51,7 +51,7 @@ GRADE_MEANING = {
     "OK": "OK: one risk to respect; half size",
     "AVOID": "AVOID: this setup is losing money lately or the news is bad",
 }
-RECORDS_VERSION = "v5"  # bump when the strategies change, so their records are recomputed
+RECORDS_VERSION = "v6"  # bump when the strategies change, so their records are recomputed
 SWING_TARGET_BAND = (10.0, 20.0)
 RECORDS_START = pd.Timestamp("2022-01-01")
 EXIT_SHORT = "half at target, rest on 20-EMA close"
@@ -512,6 +512,8 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
         row = ind.iloc[-1]
         if sym in micro_inds and not row["turnover_cr"] >= data_mod.MICRO_MIN_TURNOVER_CR:
             continue
+        if S.has_jump(tail):
+            continue  # a demerger or unadjusted split in the last year: its levels are not real
         for name in S.STRATEGIES:
             if not bool(S.signals(name, tail, market).iloc[-1]):
                 continue

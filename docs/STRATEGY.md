@@ -170,6 +170,28 @@ versions above keep the entries and the risk control, and earn a small edge per 
 16c. Stop 10-15% (under the 50-day average), target 2R (20-30%), hold 3-12 months, review
      on every quarterly result. **Not backtested**: free fundamentals have no history.
 
+## B3. Multibagger candidates (3-5 years)
+
+A watch list that grows: `~/.tradingagents/multibaggers.json`. Screen (Motilal Oswal SQGLP,
+Mayer's *100 Baggers*, Indian 10x studies): Rs 500-30,000 cr market cap, ROE >= 18%,
+debt/equity <= 50%, operating margin >= 12%, operating cash flow positive in 2 of 3 years,
+3-year sales CAGR >= 15% and profit CAGR >= 20%, sales up every year (and, where NSE's
+filings reach back, a 5-year sales CAGR >= 12% with 4 of 5 years up), P/E <= 60,
+PEG <= 1.5, promoter pledge <= 20%, above a rising 200-DMA. NEW / HOLD / REVIEW / REMOVED.
+Not backtested. Most candidates will not become multibaggers.
+
+## Data sources (2026-11-06)
+
+- **Prices**: Upstox's public candle API (split/bonus-adjusted, no key), Yahoo for any
+  symbol Upstox lacks, NSE's bhavcopy to fill a lagging session and to correct any latest
+  close more than 1% off NSE's. `TRADINGAGENTS_PRICE_SOURCE=yahoo` goes back to Yahoo alone.
+- **Corporate actions**: neither source adjusts demergers (HEG, Sep 2026: 728 -> 272). A
+  one-day move of 40%+ (open or close) marks the data as unadjusted: backtest trades that
+  touch one are dropped, and a stock with one in the last year is skipped by the live scan.
+- **Fundamentals**: NSE's XBRL annual results (official, FY2017 onward; one basis per
+  company) merged with Yahoo's last four years only when both agree within 10% on shared
+  years; promoter holding and pledge from NSE's shareholding filings.
+
 ## C. Survival rules (the account as a whole)
 
 17. **Start only with money you can watch fall 20-25%** without selling in panic. The

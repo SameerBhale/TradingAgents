@@ -232,8 +232,8 @@ def setups(
     no_news: bool = typer.Option(False, "--no-news", help="Skip headlines and concall news (faster)"),
     micro: bool = typer.Option(True, "--micro/--no-micro",
                                help="Include micro caps trading Rs 25 crore+ a day (cautioned)"),
-    multibagger: bool = typer.Option(True, "--multibagger/--no-multibagger",
-                                     help="Update and show the 3-5 year multibagger-candidate list"),
+    multibagger: bool = typer.Option(False, "--multibagger/--no-multibagger",
+                                     help="Also update and show the 3-5 year multibagger list (see `multibagger`)"),
 ):
     """Top 5 swing setups (short term) and top 3 value buys (medium/long term).
 
@@ -246,6 +246,28 @@ def setups(
     try:
         code = setups_command(top, value, refresh, as_json, markdown, no_news, with_core, mode.lower(), micro,
                               multibagger)
+    except (RuntimeError, ValueError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    raise typer.Exit(code=code)
+
+
+@app.command()
+def multibagger(
+    refresh: bool = typer.Option(False, "--refresh", help="Download fresh data even if today's is cached"),
+    as_json: bool = typer.Option(False, "--json", help="Print as JSON"),
+    markdown: bool = typer.Option(False, "--markdown", help="Print the table as Markdown"),
+    micro: bool = typer.Option(True, "--micro/--no-micro", help="Include micro caps trading Rs 25 crore+ a day"),
+):
+    """Multibagger candidates (3-5 years): update the saved, growing list and show it.
+
+    SQGLP / 100-bagger screen on NSE filings + Yahoo: NEW, HOLD, REVIEW or REMOVED, with
+    the date and price each stock was added. Not backtested; not a promise.
+    """
+    from cli.setups import multibagger_command
+
+    try:
+        code = multibagger_command(as_json, markdown, refresh, micro)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None

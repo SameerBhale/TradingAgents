@@ -188,25 +188,25 @@ def fundamentals_snapshot(symbols: list[str], stamp: str, workers: int = 8) -> d
     return {s: cache.get(s, {}) for s in symbols}
 
 
-def _statement_row(df: pd.DataFrame, names: tuple[str, ...]) -> list[float] | None:
-    """The first matching row of a Yahoo statement, oldest year first (NaN dropped)."""
+def _statement_row(df: pd.DataFrame, names: tuple[str, ...]) -> dict[str, float] | None:
+    """The first matching row of a Yahoo statement as ``{fiscal year end: value}`` (NaN dropped)."""
     for n in names:
         if n in df.index:
             row = df.loc[n].dropna()
             if len(row):
-                return [float(x) for x in row.sort_index().to_numpy()]
+                return {str(pd.Timestamp(k).date()): float(v) for k, v in row.items()}
     return None
 
 
 def annual_statements(symbols: list[str], stamp: str, workers: int = 6) -> dict[str, dict]:
-    """Up to four years of annual ``sales``, ``profit``, ``ocf`` and ``fcf`` per symbol,
-    oldest first. Cached by month (``stamp[:7]``): annual results change once a year."""
+    """Up to four years of annual ``sales``, ``profit``, ``ocf`` and ``fcf`` per symbol, each
+    ``{fiscal year end (ISO date): value}``. Cached by month (``stamp[:7]``): annual results change once a year."""
     import concurrent.futures as cf
     import json
 
     folder = os.path.join(get_config()["data_cache_dir"], "bulk")
     os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, f"annual-{stamp[:7]}.json")
+    path = os.path.join(folder, f"annual3-{stamp[:7]}.json")
     cache: dict[str, dict] = {}
     if os.path.exists(path):
         try:
