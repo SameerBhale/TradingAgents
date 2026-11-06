@@ -127,7 +127,27 @@ def _range_pct(high: pd.Series, low: pd.Series, n: int, skip: int = 0) -> pd.Ser
     return (hi - lo) / hi * 100
 
 
+# One scan computes each stock's indicators once: the swing list, the value screen and the
+# multibagger screen all ask for them. Keyed by the frame object, checked against its size
+# and last bar so a frame changed in place is recomputed.
+_MEMO: dict[int, tuple[pd.DataFrame, tuple, pd.DataFrame]] = {}
+_MEMO_MAX = 4000
+
+
 def indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """Every column the setups need (cached per frame for the life of the process)."""
+    sig = (len(df), df.index[-1] if len(df) else None, float(df["Close"].iloc[-1]) if len(df) else None)
+    hit = _MEMO.get(id(df))
+    if hit is not None and hit[0] is df and hit[1] == sig:
+        return hit[2]
+    ind = _indicators(df)
+    if len(_MEMO) >= _MEMO_MAX:
+        _MEMO.clear()
+    _MEMO[id(df)] = (df, sig, ind)
+    return ind
+
+
+def _indicators(df: pd.DataFrame) -> pd.DataFrame:
     ind = E.indicators(df, BREAKOUT_RULES)
     c, h, low = ind["Close"], ind["High"], ind["Low"]
     ind["sma5"] = c.rolling(5).mean()

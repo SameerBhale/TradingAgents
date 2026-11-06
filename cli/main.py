@@ -229,6 +229,7 @@ def setups(
     refresh: bool = typer.Option(False, "--refresh", help="Download fresh data even if today's is cached"),
     as_json: bool = typer.Option(False, "--json", help="Print as JSON"),
     markdown: bool = typer.Option(False, "--markdown", help="Print the tables as Markdown"),
+    brief: bool = typer.Option(False, "--brief", help="Compact Markdown for chat (Bull/Bear inline); full .md is saved"),
     no_news: bool = typer.Option(False, "--no-news", help="Skip headlines and concall news (faster)"),
     micro: bool = typer.Option(True, "--micro/--no-micro",
                                help="Include micro caps trading Rs 25 crore+ a day (cautioned)"),
@@ -245,7 +246,7 @@ def setups(
 
     try:
         code = setups_command(top, value, refresh, as_json, markdown, no_news, with_core, mode.lower(), micro,
-                              multibagger)
+                              multibagger, brief)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None

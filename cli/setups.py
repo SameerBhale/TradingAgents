@@ -156,6 +156,106 @@ def render_multibagger(mb: dict) -> list[str]:
     return out
 
 
+SHORT_SETUP = {"breakout": "52w breakout", "vcp": "VCP", "flag": "Q-flag", "ep": "Episodic pivot",
+               "crossback": "EMA crossback", "retest": "BO+retest", "ct": "CT+retest"}
+
+
+def _short_name(name: str) -> str:
+    for w in (" Limited", " Ltd.", " Ltd", " Industries", " International", " Technologies", " Enterprises"):
+        name = name.replace(w, "")
+    return name.strip()
+
+
+def _clip(text: str, n: int) -> str:
+    return text if len(text) <= n else text[: n - 1].rstrip(" ;,") + "…"
+
+
+def _first_reason(text: str) -> str:
+    """The text up to the first "; " that is not inside brackets."""
+    depth = 0
+    for k, ch in enumerate(text):
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if depth == 0 and text.startswith("; ", k):
+            return text[:k]
+    return text
+
+
+_GENERIC_BEAR = ("Micro cap", "Small cap")
+
+
+def _brief_verdict(i: dict) -> str:
+    """The verdict word plus its first reason, short (the full text stays in the saved .md)."""
+    tier = i.get("tier") or i["grade"]
+    head, _, rest = i["verdict"].partition(": ")
+    micro = " MICRO" if i.get("cap") == "Micro" else ""
+    reason = _first_reason(rest.split("; MICRO CAP caution")[0]) if rest else ""
+    return f"**{tier}{micro}**" + (f": {_clip(reason, 70)}" if reason else "")
+
+
+def render_brief(r: dict) -> str:
+    """The compact list for chat: short tables, the exit rule once, Bull/Bear inline.
+    About a third of the full Markdown; the full version is still saved to disk."""
+    swing, value = r["swing"], r.get("value", {"picks": []})
+    m = swing["market"]
+    trend = "above" if m["nifty"] > m["nifty_sma200"] else "below"
+    src = r.get("sources") or {}
+    out = [f"# Setups {r['as_of']} | Nifty {m['nifty']:,.0f} ({trend} 200-DMA) | breadth {m['breadth_pct']:.0f}% | "
+           f"scanned {swing.get('scanned', 0)} + {swing.get('micro_scanned', 0)} micro"]
+    if src:
+        out.append(f"Prices: Upstox {src.get('upstox', 0)}, Yahoo {src.get('yahoo', 0)}, "
+                   f"NSE-corrected {src.get('nse_corrected', 0)}")
+    out += [f"> {n}" for n in swing["notes"]]
+    out += ["", "## SWING (buy-stop above; GTT OCO: stop + target for half; rest sells on a close below the 20-EMA)", "",
+            "| # | Stock | Cap | Setup | Money | Setup 12m | Verdict | Buy above (max) | Stop | Target | Hold |",
+            "|---|---|---|---|---|---|---|---|---|---|---|"]
+    recs, mrecs = swing["records"], swing.get("micro_records") or {}
+    for i in swing["ideas"]:
+        hold = _hold(i, recs).split(" (")[0].replace(" sessions", "d").replace(", no limit", "")
+        out.append(
+            f"| {i['rank']} | {_short_name(i['name'])} ({i['symbol'].removesuffix('.NS')}) | {i['cap']} | "
+            f"{SHORT_SETUP.get(i['strategy'], i['strategy'])} | {_money(i)} | {_record(i, recs, mrecs)} | "
+            f"{_brief_verdict(i)} | {i['entry']:,.2f} ({i['max_entry']:,.2f}) | {i['stop']:,.2f} -{i['risk_pct']:.1f}% | "
+            f"{i['target']:,.2f} +{i['reward_pct']:.1f}% | {hold} |")
+    if not swing["ideas"]:
+        out.append("| - | No setup inside the 5-10% stop / 10-20% target bands today | | | | | | | | | |")
+    top = [i for i in swing["ideas"] if i["grade"] != "AVOID"][:3]
+    if top:
+        out += ["", "Bull / Bear:"]
+        for i in top:
+            bull = _clip(i["bull"][0], 110) if i.get("bull") else "-"
+            bears = [b for b in i.get("bear") or [] if not b.startswith(_GENERIC_BEAR)] or i.get("bear") or []
+            bear = _clip(bears[0] if bears else "no bear point found", 110)
+            extra = f" Results {i['earnings_date']}." if i.get("earnings_date") else ""
+            out.append(f"- {i['symbol'].removesuffix('.NS')}: + {bull} / - {bear}{extra}")
+    acc = (swing.get("money") or {}).get("accumulation") or []
+    if acc:
+        out += ["", "Money flow watch (not signals): " + ", ".join(
+            f"{a['symbol'].removesuffix('.NS')} {a['dp_trend']:.2f}x" for a in acc)]
+    if value["picks"]:
+        out += ["", "## VALUE (3-12 months; limit buy at or below; review each quarterly result)", "",
+                "| # | Stock | Cap | P/E (sector) | ROE | Sales / Profit gr. | Verdict | Buy at or below | Stop | Target |",
+                "|---|---|---|---|---|---|---|---|---|---|"]
+        for v in value["picks"]:
+            word, _, why = v["verdict"].split(" [MULTIBAGGER")[0].partition(": ")
+            concerns = [c for c in why.split("; ") if c and not c.startswith(("MICRO CAP", "thin float", "operator",
+                                                                               "weaker free", "half size"))]
+            word += " MICRO" if v.get("cap") == "Micro" else ""
+            verdict = word + (f": {_clip(concerns[0], 45)}" if concerns and not word.startswith("GOOD") else "")
+            tag = " [MB]" if v.get("multibagger_candidate") else ""
+            out.append(
+                f"| {v['rank']} | {_short_name(v['name'])} ({v['symbol'].removesuffix('.NS')}){tag} | {v['cap']} | "
+                f"{v['pe']} ({v['sector_pe']}) | {v['roe_pct']}% | {v['revenue_growth_pct']}% / {v['earnings_growth_pct']}% | "
+                f"**{verdict}** | {v['max_entry']:,.2f} | {v['stop']:,.2f} -{v['risk_pct']:.0f}% | "
+                f"{v['target']:,.2f} +{v['reward_pct']:.0f}% |")
+        v = value["picks"][0]
+        if v.get("concall"):
+            out.append(f"\n{v['symbol'].removesuffix('.NS')} news: " +
+                       " | ".join(_clip(n["title"], 80) for n in v["concall"][:2]))
+    out += ["", "BEST > BETTER > GOOD (full size) > OK (half) > AVOID. MICRO: half of that. [MB] = on the "
+                "multibagger list. Not investment advice."]
+    return "\n".join(out)
+
+
 def render_markdown(r: dict) -> str:
     swing, value = r["swing"], r.get("value", {"picks": []})
     m = swing["market"]
@@ -246,7 +346,7 @@ def render_markdown(r: dict) -> str:
 
 def setups_command(top: int, value_top: int, refresh: bool, as_json: bool, markdown: bool, no_news: bool,
                    with_core: bool = False, mode: str = "balanced", micro: bool = True,
-                   multibagger: bool = False) -> int:
+                   multibagger: bool = False, brief: bool = False) -> int:
     def progress(done, total):
         if not (as_json or markdown):
             console.print(f"[dim]Downloading daily bars {done}/{total}...[/dim]")
@@ -260,6 +360,8 @@ def setups_command(top: int, value_top: int, refresh: bool, as_json: bool, markd
         fh.write(md_text)
     if as_json:
         print(json.dumps(r, indent=1, default=float))
+    elif brief:
+        print(render_brief(r))
     elif markdown:
         print(md_text)
     else:
