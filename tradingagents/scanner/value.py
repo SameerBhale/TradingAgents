@@ -7,7 +7,8 @@ for the stock-report skill), not a rule-tested signal like the momentum core.
 The method borrows from William O'Neil's CAN SLIM (current and annual earnings growth,
 a leader, institutions buying) and Minervini's SEPA (buy only in a stage-2 uptrend):
 
-Screen (large, mid and small caps, the 250 most traded):
+Screen (the 250 most traded large, mid and small caps, plus micro caps trading
+Rs 25 crore+ a day; a micro cap is never GOOD and its verdict carries a caution):
 
 - Chart: Minervini's stage 2 (above the 150 and 200-day averages, the 200-day rising,
   within 25% of the 52-week high): the market is already re-rating it.
@@ -107,14 +108,15 @@ def _concall(name: str) -> list[dict]:
 
 
 def value_picks(md: MarketData, top: int = 3, with_news: bool = True) -> dict:
+    pool = {**md.stocks, **getattr(md, "micro", {})}
     rows = []
-    for sym, d in md.stocks.items():
+    for sym, d in pool.items():
         if d.index[-1] != md.nifty.index[-1] or len(d) < 260:
             continue
         turnover = float((d["Close"] * d["Volume"]).iloc[-20:].mean())
         rows.append((sym, turnover))
     liquid = [s for s, _ in sorted(rows, key=lambda x: x[1], reverse=True)[:250]]
-    inds = {s: S.indicators(md.stocks[s]) for s in liquid}
+    inds = {s: S.indicators(pool[s]) for s in liquid}
     sound = {s: p for s, ind in inds.items() if (p := _pattern(ind)) is not None}
     funds = fundamentals_snapshot(sorted(sound), stamp=str(md.last))
 
@@ -182,6 +184,8 @@ def value_picks(md: MarketData, top: int = 3, with_news: bool = True) -> dict:
             p.risks.append("Earnings growth over 100% (revenue kept pace, so likely real); confirm in the concall.")
         if p.cap == "Small":
             p.risks.append("Small cap: thinner liquidity and larger swings.")
+        elif p.cap == "Micro":
+            p.risks.append("Micro cap (below the top 500): thin float, operator risk, weaker free data.")
         p.risks.append("Fundamentals are today's Yahoo snapshot; confirm in the latest results.")
         picks.append(p)
     if with_news:

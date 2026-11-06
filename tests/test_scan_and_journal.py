@@ -290,3 +290,114 @@ def test_journal_partial_close_and_errors(tmp_path):
     with pytest.raises(ValueError):
         j.add(symbol="X.NS", entry_date="2026-10-01", entry_price=0, qty=1)
     assert rest.holding_days(date(2026, 10, 11)) == 10
+
+
+def _retest_frame():
+    """A base under ~97.5, a breakout on 3x volume, a run to 105, a light pullback to the
+    old high that holds, then a bounce bar above the prior day's high."""
+    closes = list(np.linspace(70, 97, 200)) + [95 + 1.5 * np.sin(k / 3) for k in range(70)]  # a 70-day base
+    df = _frame(closes, vol=2e6)
+    bars = [  # open, high, low, close, volume
+        (98.0, 101.2, 98.0, 101.0, 6e6),   # the breakout
+        (101.5, 103.6, 101.0, 103.0, 2e6),
+        (103.5, 105.5, 102.5, 105.0, 2e6),  # the run, 4%+ above the level
+        (104.0, 104.0, 101.5, 102.0, 1.5e6),
+        (101.5, 101.8, 99.4, 100.0, 1.5e6),
+        (100.0, 100.4, 98.6, 99.0, 1.5e6),  # the retest: low within 3% of the old high
+        (99.5, 102.0, 99.4, 101.5, 2e6),    # the bounce: close above yesterday's high
+    ]
+    idx = pd.bdate_range(df.index[-1] + pd.offsets.BDay(1), periods=len(bars))
+    extra = pd.DataFrame(bars, columns=["Open", "High", "Low", "Close", "Volume"], index=idx)
+    return pd.concat([df, extra])
+
+
+@pytest.mark.unit
+def test_breakout_retest_signal_and_plan():
+    ind = S.indicators(_retest_frame())
+    row = ind.iloc[-1]
+    assert row["rt_level"] == pytest.approx(97 * 1.005, abs=0.01)
+    assert row["rt_age"] == 6
+    assert bool(S.signals("retest", ind, None).iloc[-1])
+    assert not S.signals("retest", ind, None).iloc[-2]  # the retest bar itself is not the trigger
+    s = S.setup_for("retest", row)
+    assert s.entry == pytest.approx(102.0 * 1.001, abs=0.01)
+    assert s.entry * 0.90 - 0.01 <= s.stop <= s.entry * 0.95 + 0.01  # inside the 5-10% band
+
+
+@pytest.mark.unit
+def test_breakout_retest_rejects_a_failed_level():
+    df = _retest_frame()
+    df.iloc[-2, df.columns.get_loc("Close")] = 92.0   # closed far under the old high: the level broke
+    df.iloc[-2, df.columns.get_loc("Low")] = 91.5
+    ind = S.indicators(df)
+    assert not S.signals("retest", ind, None).iloc[-1]
+
+
+@pytest.mark.unit
+def test_breakout_retest_needs_a_base_not_a_running_stock():
+    # A stock making a new high every day has no base: its "breakout" levels are yesterday's highs.
+    ind = S.indicators(_frame(np.linspace(100, 200, 300), vol=2e6))
+    assert ind["rt_level"].isna().all()
+
+
+@pytest.mark.unit
+def test_micro_caps_use_the_same_scale_on_their_own_record():
+    good = {"12m": {"trades": 20, "expectancy_r": 0.3}, "6m": {"trades": 10, "expectancy_r": 0.2}}
+    thin = {"12m": {"trades": 5, "expectancy_r": 0.9}, "6m": {"trades": 3, "expectancy_r": 0.9}}
+    assert D._grade("vcp", good, D.MICRO_MIN_YEAR, D.MICRO_MIN_SIX) == "GOOD"
+    assert D._grade("vcp", thin, D.MICRO_MIN_YEAR, D.MICRO_MIN_SIX) == "AVOID"
+
+
+@pytest.mark.unit
+def test_good_splits_into_better_and_best_by_confirmations():
+    assert D.tier_of("GOOD", ["a", "b", "c"]) == "BEST"
+    assert D.tier_of("GOOD", ["a", "b"]) == "BETTER"
+    assert D.tier_of("GOOD", ["a"]) == "GOOD"
+    assert D.tier_of("OK", ["a", "b", "c"]) == "OK"
+    row = pd.Series({"ud_ratio": 1.5, "rs_rank": 92.0})
+    rec = {"12m": {"win_rate": 45.0}}
+    assert len(D.confirmations(None, row, rec)) == 3
+
+
+@pytest.mark.unit
+def test_up_down_volume_ratio():
+    df = _frame(np.linspace(100, 150, 300))
+    df["Volume"] = np.where(np.arange(300) % 2 == 0, 2e6, 1e6)
+    df.iloc[1::3, df.columns.get_loc("Close")] *= 0.99  # some down days on light volume
+    ind = S.indicators(df)
+    assert ind["ud_ratio"].iloc[-1] > 1.0
+
+
+@pytest.mark.unit
+def test_flag_and_pole_breakout_is_found():
+    closes = list(np.linspace(100, 110, 250)) + list(np.linspace(110, 135, 10))   # the pole: +23%
+    closes += [134, 132, 131, 132, 130, 131, 132, 133]                            # a tight flag
+    df = _frame(closes, vol=2e6)
+    df.loc[df.index[-1] + pd.offsets.BDay(1)] = [134.0, 138.0, 133.5, 137.5, 6e6]  # the break
+    df.loc[df.index[-1] + pd.offsets.BDay(1)] = [137.0, 139.0, 136.0, 138.0, 2e6]  # the day after
+    ind = S.indicators(df)
+    assert ind["rt_kind"].iloc[-1] == 6
+    assert ind["rt_level"].iloc[-1] == pytest.approx(135 * 1.005, rel=0.01)
+
+
+@pytest.mark.unit
+def test_ct_line_falls_through_lower_highs():
+    h = np.array([10, 11, 12, 20, 12, 11, 10, 11, 12, 13, 12, 11, 10, 10, 10, 10, 11, 12, 17, 12, 11, 10, 9, 9, 9,
+                  9, 9, 9, 9, 9, 9], dtype=float)
+    h = np.concatenate([np.full(6, 9.0), h, np.full(5, 9.0)])
+    c = h - 0.5
+    sh = S._swings(h, True)
+    line = S._ct_line(h, c, sh, len(h) - 1)
+    assert line == line and line < 17  # a falling line from 20 through 17
+
+
+@pytest.mark.unit
+def test_micro_rs_rank_does_not_move_the_core_ranks():
+    strong = S.indicators(_frame(np.linspace(100, 300, 300)))
+    weak = S.indicators(_frame(np.linspace(100, 120, 300)))
+    micro = S.indicators(_frame(np.linspace(100, 250, 300)))
+    S.add_rs_rank({"A": strong, "B": weak})
+    before = strong["rs_rank"].iloc[-1], weak["rs_rank"].iloc[-1]
+    S.add_rs_rank({"A": strong, "B": weak}, {"M": micro})
+    assert (strong["rs_rank"].iloc[-1], weak["rs_rank"].iloc[-1]) == before
+    assert weak["rs_rank"].iloc[-1] < micro["rs_rank"].iloc[-1] < 99

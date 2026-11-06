@@ -230,6 +230,8 @@ def setups(
     as_json: bool = typer.Option(False, "--json", help="Print as JSON"),
     markdown: bool = typer.Option(False, "--markdown", help="Print the tables as Markdown"),
     no_news: bool = typer.Option(False, "--no-news", help="Skip headlines and concall news (faster)"),
+    micro: bool = typer.Option(True, "--micro/--no-micro",
+                               help="Include micro caps trading Rs 25 crore+ a day (never GOOD; cautioned)"),
 ):
     """Top 5 swing setups (short term) and top 3 value buys (medium/long term).
 
@@ -240,7 +242,7 @@ def setups(
     from cli.setups import setups_command
 
     try:
-        code = setups_command(top, value, refresh, as_json, markdown, no_news, with_core, mode.lower())
+        code = setups_command(top, value, refresh, as_json, markdown, no_news, with_core, mode.lower(), micro)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None

@@ -1,4 +1,4 @@
-"""Five swing setups for NSE stocks, drawn from the best-documented swing traders.
+"""Seven swing setups for NSE stocks, drawn from the best-documented swing traders.
 
 All are long-only, daily-bar, delivery trades with a buy-stop entry (it fills only if
 the move starts) and a stop of 5-10%. The exit has no time limit (Qullamaggie and
@@ -15,7 +15,7 @@ funds do) from NSE's daily MTO file. ``dp_trend`` is the 20-day average delivery
 the 100-day average. Money IN (>= 1.05) was better in every period, money OUT (< 1.00)
 worst; episodic pivots are exempt (news days are full of intraday churn).
 
-The five setups:
+The seven setups:
 
 - ``breakout``: a close at a new 52-week high on volume out of a tight base. The
   original tested rule (``engine``): the one setup that held up in 2022-26.
@@ -32,6 +32,18 @@ The five setups:
 - ``ep``: Qullamaggie's episodic pivot. A gap-up day of 6%+ on 3x average volume after
   news (results, orders), closing strong, in a stock above its 200-DMA. Buy-stop above
   the day's high; stop under the day's low.
+- ``retest``: breakout and retest of a horizontal level (the supply-zone flip taught by
+  Indian price-action analysts, e.g. Apoorv Dubey's posts on TradingView). The level is
+  the first that fits: an all-time high (multi-year base), the 52-week high, an
+  ascending-triangle top (2+ touches, rising lows) or a cup-and-handle / base rim (a
+  12-50% deep base of up to 150 sessions) or a flag and pole (a 15%+ pole in 15 sessions or
+  less, then a 5-20 session flag no deeper than 12%). A fresh close above it (20+ sessions under it)
+  on 1.5x volume, a move of 4%+ away, a lighter-volume pullback that tests the level
+  (low within 3%) and holds it (no close more than 3% under), then a bounce bar that
+  closes above the prior day's high. Buy-stop above the bounce; stop under the retest low.
+- ``ct``: the same retest after a CT (counter-trendline) break: a falling line through
+  the highest swing high of the year and the lower swing highs after it, broken on 1.5x
+  volume. A reversal, so it needs the 50-DMA, not a full stage-2 trend.
 
 Shared filters: price >= Rs 100, 20-day turnover >= Rs 10 crore, the Nifty above its
 50-DMA (except ``ep``: a big news gap can lead in a soft market), 0.30% round-trip costs.
@@ -68,13 +80,15 @@ class Setup:
         return (self.entry - self.stop) / self.entry * 100
 
 
-STRATEGIES = ("breakout", "vcp", "flag", "ep", "crossback")
+STRATEGIES = ("breakout", "vcp", "flag", "ep", "crossback", "retest", "ct")
 LABELS = {
     "breakout": "52-week high breakout",
     "vcp": "Minervini VCP (tight base, stage-2 uptrend)",
     "flag": "Qullamaggie flag (30%+ run, then tight flag)",
     "ep": "Episodic pivot (news gap-up on 3x volume)",
     "crossback": "Kell EMA crossback (leader dips to 10/20 EMA, reclaims)",
+    "retest": "Breakout + retest (old resistance holds as support)",
+    "ct": "CT trendline breakout + retest",
 }
 SOURCES = {
     "breakout": "52-week-high breakouts (Darvas, O'Neil); tested on NSE 2017-2026",
@@ -82,7 +96,14 @@ SOURCES = {
     "flag": "Kristjan Kullamagi (Qullamaggie), breakout setup",
     "ep": "Kristjan Kullamagi (Qullamaggie), episodic pivot",
     "crossback": "Oliver Kell, 2020 US Investing Champion (+941%): EMA crossback",
+    "retest": "Breakout and retest / supply-zone flip (Indian price-action practice, e.g. Apoorv Dubey); "
+              "cup and handle (O'Neil), ascending triangle (Bulkowski)",
+    "ct": "Counter-trendline breakout and retest (Indian price-action practice)",
 }
+# The level a retest setup broke, in plain words (``rt_kind``).
+RETEST_KINDS = {1: "all-time high (multi-year base)", 2: "52-week high", 3: "ascending triangle",
+                4: "cup and handle / base rim", 5: "CT (falling trendline)", 6: "flag and pole"}
+HORIZONTAL_KINDS = (1, 2, 3, 4, 6)
 
 BREAKOUT_RULES = E.Rules(
     lookback=250, vol_mult=1.5, base_days=20, max_base_pct=12.0, max_extension_pct=4.0,
@@ -134,18 +155,170 @@ def indicators(df: pd.DataFrame) -> pd.DataFrame:
     ind["rs_raw"] = (0.4 * (c / c.shift(63) - 1) + 0.2 * (c / c.shift(126) - 1)
                      + 0.2 * (c / c.shift(189) - 1) + 0.2 * (c / c.shift(250) - 1))
     ind["rs_rank"] = np.nan  # filled by add_rs_rank over the whole universe
+    # O'Neil's up/down volume ratio: volume on up days over volume on down days, 50 sessions.
+    chg = c.diff()
+    up_v = ind["Volume"].where(chg > 0, 0.0).rolling(50).sum()
+    dn_v = ind["Volume"].where(chg < 0, 0.0).rolling(50).sum()
+    ind["ud_ratio"] = up_v / dn_v.replace(0, np.nan)
+    _add_retest(ind)
     return ind
 
 
-def add_rs_rank(inds: dict[str, pd.DataFrame]) -> None:
+# Breakout + retest parameters.
+RETEST_MIN_AGE, RETEST_MAX_AGE = 3, 20   # sessions since the breakout
+RETEST_BASE_DAYS = 20                     # closes under the level before a breakout counts as fresh
+RETEST_RUN_PCT = 4.0                      # the breakout must first move this far above the level
+RETEST_TOUCH_PCT = 3.0                    # the pullback low comes within this of the level
+RETEST_HOLD_PCT = 3.0                     # and no close more than this under it
+
+
+RETEST_BASE_WINDOW = 150                  # cup / triangle base: up to 30 weeks
+SWING = 5                                 # a swing high/low: the extreme of 5 bars each side
+
+
+def _swings(x: np.ndarray, high: bool) -> np.ndarray:
+    """Indices of swing highs (or lows): the extreme of ``SWING`` bars on each side."""
+    k = SWING
+    if len(x) < 2 * k + 1:
+        return np.asarray([], dtype=int)
+    win = np.lib.stride_tricks.sliding_window_view(x, 2 * k + 1)
+    ext = win.max(axis=1) if high else win.min(axis=1)
+    idx = np.flatnonzero(x[k: len(x) - k] == ext) + k
+    return idx.astype(int)
+
+
+def _ct_line(h: np.ndarray, c: np.ndarray, sh: np.ndarray, t: int) -> float:
+    """The falling resistance line at bar ``t``: from the highest swing high of the last
+    250 sessions through the lower swing highs after it (the least steep line that keeps
+    every later swing high under it). NaN when there is no valid falling line, or when a
+    close already broke it before ``t``."""
+    conf = sh[(sh <= t - SWING) & (sh >= t - 250)]
+    if len(conf) < 2:
+        return np.nan
+    p1 = conf[np.argmax(h[conf])]
+    later = conf[conf >= p1 + 15]
+    if not len(later):
+        return np.nan
+    slope = float(((h[later] - h[p1]) / (later - p1)).max())
+    if slope >= 0:
+        return np.nan
+    span = np.arange(p1 + 1, t)
+    if len(span) and (c[span] > h[p1] + slope * (span - p1)).any():
+        return np.nan  # already broken earlier: not a fresh break
+    return h[p1] + slope * (t - p1)
+
+
+def _add_retest(ind: pd.DataFrame) -> None:
+    """The latest fresh breakout of a level and what price did after it, per bar:
+    ``rt_kind`` (see RETEST_KINDS), ``rt_level``, ``rt_age``, ``rt_low`` / ``rt_minclose`` /
+    ``rt_peak`` since the breakout and ``rt_pullvol`` (average volume after it / breakout volume)."""
+    c = ind["Close"].to_numpy(dtype=float)
+    h = ind["High"].to_numpy(dtype=float)
+    low = ind["Low"].to_numpy(dtype=float)
+    v = ind["Volume"].to_numpy(dtype=float)
+    pivot = ind["pivot"].to_numpy(dtype=float)
+    vol50 = ind["vol50"].to_numpy(dtype=float)
+    cpos = ind["close_pos"].to_numpy(dtype=float)
+    sma50 = ind["sma50"].to_numpy(dtype=float)
+    hi_s = ind["High"]
+    # A fresh breakout clears a level set 20+ sessions ago (a base under it), not
+    # yesterday's high in a stock already running.
+    gap = RETEST_BASE_DAYS + 1
+    recent = hi_s.shift(1).rolling(RETEST_BASE_DAYS).max().to_numpy(dtype=float)
+    older52 = hi_s.shift(gap).rolling(250 - RETEST_BASE_DAYS, min_periods=100).max().to_numpy(dtype=float)
+    ath = hi_s.shift(gap).expanding(min_periods=500).max().to_numpy(dtype=float)
+    base_hi = hi_s.shift(gap).rolling(RETEST_BASE_WINDOW - RETEST_BASE_DAYS, min_periods=60).max().to_numpy(dtype=float)
+    base_lo = ind["Low"].shift(1).rolling(RETEST_BASE_WINDOW, min_periods=60).min().to_numpy(dtype=float)
+    sh, sl = _swings(h, True), _swings(low, False)
+    n = len(c)
+
+    def flag(t: int):
+        """(6, flag high) when bar ``t`` breaks a flag: a pole of 15%+ in 15 sessions or less,
+        then a flag of 5-20 sessions no deeper than 12%, starting at the pole's top."""
+        for f in (5, 8, 12, 16, 20):
+            a = t - f
+            if a - 15 < 0:
+                return None
+            top = h[max(a - 3, 0):a + 3].max()          # the pole's top
+            fhi = max(h[a:t].max(), top)                # the flag's resistance includes it
+            flo = low[a:t].min()
+            if (fhi - flo) / fhi > 0.12 or c[t] <= fhi:
+                continue
+            pole_lo = low[a - 15:a].min()
+            if fhi / pole_lo - 1 >= 0.15 and h[a:t].max() <= top * 1.01:   # the flag drifts, it does not climb
+                return 6, fhi
+        return None
+    keys = ("rt_kind", "rt_level", "rt_age", "rt_low", "rt_minclose", "rt_peak", "rt_pullvol")
+    out = {k: np.full(n, np.nan) for k in keys}
+
+    def horizontal(t: int):
+        """(kind, level) of a fresh horizontal breakout at ``t``, or None."""
+        if recent[t] != recent[t]:
+            return None
+        if ath[t] == ath[t] and pivot[t] == pivot[t] and c[t] > ath[t] >= recent[t] and ath[t] >= pivot[t] * 0.999:
+            return 1, ath[t]
+        if pivot[t] == pivot[t] and c[t] > pivot[t] and older52[t] >= recent[t]:
+            return 2, pivot[t]
+        lvl = base_hi[t]
+        if not (lvl == lvl and base_lo[t] == base_lo[t] and c[t] > lvl >= recent[t]):
+            return None
+        depth = (lvl - base_lo[t]) / lvl * 100
+        if not 12.0 <= depth <= 50.0:
+            return None
+        tops = sh[(sh >= t - RETEST_BASE_WINDOW) & (sh <= t - SWING) & (h[sh] >= lvl * 0.97)]
+        if len(tops) >= 2:
+            lows = sl[(sl > tops[0]) & (sl <= t - SWING)]
+            if len(lows) >= 2 and low[lows[-1]] > low[lows[-2]]:
+                return 3, lvl
+        return 4, lvl
+
+    b = -1
+    kind = level = bvol = lo = mc = pk = vsum = 0.0
+    for t in range(n):
+        volume_ok = vol50[t] == vol50[t] and v[t] >= 1.5 * vol50[t] and cpos[t] >= 0.5
+        hit = horizontal(t) if volume_ok else None
+        if hit is not None and hit[0] in (3, 4) or hit is None and volume_ok:
+            fl = flag(t)  # a flag beats a broad base: its level is the nearer resistance
+            hit = fl or hit
+        if hit is None and volume_ok and sma50[t] == sma50[t] and c[t] > sma50[t]:
+            line = _ct_line(h, c, sh, t)
+            past = sh[(sh <= t - SWING) & (sh >= t - 250)]
+            if line == line and c[t] > line and len(past) and h[past].max() >= c[t] * 1.10:
+                hit = (5, line)  # a real fall first: the year's high is 10%+ above the break
+        if hit is not None:
+            b, (kind, level), bvol, pk = t, hit, v[t], h[t]
+            lo, mc, vsum = np.inf, np.inf, 0.0
+            continue
+        if b < 0:
+            continue
+        age = t - b
+        if age > RETEST_MAX_AGE:
+            b = -1
+            continue
+        lo, mc, pk = min(lo, low[t]), min(mc, c[t]), max(pk, h[t])
+        vsum += v[t - 1] if age > 1 else 0.0
+        out["rt_kind"][t], out["rt_level"][t], out["rt_age"][t] = kind, level, age
+        out["rt_low"][t], out["rt_minclose"][t], out["rt_peak"][t] = lo, mc, pk
+        out["rt_pullvol"][t] = (vsum / (age - 1)) / bvol if age > 1 and bvol > 0 else np.nan
+    for k, a in out.items():
+        ind[k] = a
+
+
+def add_rs_rank(inds: dict[str, pd.DataFrame], extra: dict[str, pd.DataFrame] | None = None) -> None:
     """Minervini's relative-strength rank: each stock's weighted 12-month return as a
-    percentile (0-99) of the whole universe on each date, written into ``ind["rs_rank"]``."""
+    percentile (0-99) of the whole universe on each date, written into ``ind["rs_rank"]``.
+    ``extra`` stocks (micro caps) are ranked against ``inds`` without changing its ranks."""
     if not inds:
         return
     panel = pd.DataFrame({s: d["rs_raw"] for s, d in inds.items()})
     ranks = panel.rank(axis=1, pct=True) * 99
     for s, d in inds.items():
         d["rs_rank"] = ranks[s].reindex(d.index)
+    counted = panel.notna().sum(axis=1).replace(0, np.nan)
+    for s, d in (extra or {}).items():
+        x = d["rs_raw"].reindex(panel.index)
+        below = panel.lt(x, axis=0).sum(axis=1)
+        d["rs_rank"] = ((below + 1) / (counted + 1) * 99).where(x.notna()).reindex(d.index)
 
 
 # Follow the money (delivery % trend). Episodic pivots are exempt.
@@ -246,6 +419,23 @@ def signals(name: str, ind: pd.DataFrame, market: pd.DataFrame | None) -> pd.Ser
             & (c > ind["High"].shift(1)) & (ind["close_pos"] >= 0.6)
         )
         return m.fillna(False)
+    if name in ("retest", "ct"):
+        lvl = ind["rt_level"]
+        if name == "retest":   # horizontal levels: a stage-2 trend
+            trend = ind["rt_kind"].isin(HORIZONTAL_KINDS) & (c > ind["sma50"]) & (ind["sma50"] > ind["sma200"])
+        else:                  # a trendline break is a reversal: the 50-DMA is enough
+            trend = (ind["rt_kind"] == 5) & (c > ind["sma50"])
+        m = (
+            base & _market_ok(ind, market) & trend
+            & (ind["rt_age"] >= RETEST_MIN_AGE)
+            & (ind["rt_peak"] >= lvl * (1 + RETEST_RUN_PCT / 100))         # it broke out for real
+            & (ind["rt_low"] <= lvl * (1 + RETEST_TOUCH_PCT / 100))        # came back to test the level
+            & (ind["rt_minclose"] >= lvl * (1 - RETEST_HOLD_PCT / 100))    # and the level held
+            & (ind["rt_pullvol"] < 0.75)                                    # on lighter volume
+            & (c > ind["High"].shift(1)) & (ind["close_pos"] >= 0.5)        # the bounce
+            & (c >= lvl) & (c <= lvl * 1.08)                                # near the level, not extended
+        )
+        return m.fillna(False)
     raise ValueError(f"unknown strategy {name!r}")
 
 
@@ -292,6 +482,10 @@ def _raw_setup(name: str, row: pd.Series) -> Setup | None:
     if name == "crossback":
         trigger = round(float(row["High"]) * 1.001, 2)
         stop = min(float(row["low5"]), float(row["ema20"])) * 0.995
+        return _fixed(name, trigger, stop, 2.0)
+    if name in ("retest", "ct"):
+        trigger = round(float(row["High"]) * 1.001, 2)
+        stop = min(float(row["rt_low"]), float(row["rt_level"]) * 0.99) * 0.995
         return _fixed(name, trigger, stop, 2.0)
     raise ValueError(f"unknown strategy {name!r}")
 

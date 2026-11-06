@@ -51,7 +51,7 @@ but the account barely grew over 10 years, so they are only the satellite.
 
 ## B. Swing setups (short term)
 
-Five setups, each from a documented trader, all long-only on daily bars with a buy-stop
+Six setups, each from a documented trader or a common Indian price-action practice, all long-only on daily bars with a buy-stop
 entry (no fill, no trade):
 
 | Setup | Source | Rule in one line |
@@ -61,6 +61,19 @@ entry (no fill, no trade):
 | Qullamaggie flag | Kristjan Kullamagi | a 30%+ run in 1-3 months, then a tight flag on the rising 10/20-day averages, ADR >= 3% |
 | Episodic pivot | Kristjan Kullamagi | a 3%+ gap and 6%+ day on 3x volume after news, closing strong, above the 200-DMA |
 | Kell EMA crossback | Oliver Kell, US Investing Champion 2020 (+941%) | a stage-2 leader dips to its 20 EMA and closes back above the 10 EMA and the prior high |
+| Breakout + retest | supply-zone flip (Indian price-action practice, e.g. Apoorv Dubey); cup and handle (O'Neil); ascending triangle (Bulkowski) | a fresh breakout of a horizontal level (all-time high, 52-week high, flag and pole, ascending triangle, or cup-and-handle / base rim) after 20+ sessions under it, on 1.5x volume, a 4%+ move above it, a lighter-volume pullback that tests the level (within 3%) and holds it (no close 3%+ under), then a bounce over the prior day's high; stage-2 trend |
+| CT breakout + retest | counter-trendline break (Indian price-action practice) | the same retest after a close through a falling line from the year's highest swing high through the lower swing highs after it; a reversal, so it needs only the 50-DMA |
+
+**Verdict scale** (added 2026-11-06): GOOD is split by three checks that successful
+traders use: the setup's 12-month success rate >= 40%, O'Neil's up/down volume ratio
+(50 days) >= 1.2 (volume building up) and an RS rank >= 80. All three: BEST; two:
+BETTER; else GOOD. An up/down ratio under 0.8 (distribution) caps a setup at OK.
+
+**Micro caps** (below the top 500 by market cap) are scanned only when they trade Rs 25
+crore+ a day (20-day average). They never enter the momentum core, the breadth or the RS
+rank. They get the same verdict scale, judged on each setup's record on micro caps alone
+(needs 15 trades in 12 months and 8 in 6), with a MICRO CAP caution: half size. The
+micro-cap record is survivor-biased (today's liquid micro caps), so it flatters them.
 
 **10-year test** (2017-06 to 2026-11, 1,968 NSE stocks, 0.30% costs, stop 5-10%, target 2R,
 max 20 sessions; R per trade after costs):

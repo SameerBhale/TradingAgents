@@ -1,4 +1,4 @@
-"""The daily swing list: every NSE setup from five strategies, judged, planned and argued.
+"""The daily swing list: every NSE setup from six strategies, judged, planned and argued.
 
     from tradingagents.scanner.daily import run_daily
     result = run_daily(capital=500_000, risk_pct=1.0, top=10)
@@ -19,8 +19,10 @@ The exit has no time limit: half at the target, the rest on a close below the 20
 every period; the VCP, flag, crossback and episodic pivot worked in rising markets and
 lost in the weak 2024-26 one. So the verdict follows each strategy's live record.
 
-Micro caps (below the Nifty Smallcap 250) are excluded: they lost money on every
-strategy in the weak market.
+Micro caps (below the top 500 by market cap) lost money on every strategy in the weak
+2024-26 market, so they are scanned only when they trade Rs 25 crore+ a day, and they are
+never GOOD: their verdict starts "MICRO CAP" and follows the strategy's record on micro
+caps alone (AVOID when that record is losing or too thin).
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ GRADE_MEANING = {
     "OK": "OK: one risk to respect; half size",
     "AVOID": "AVOID: this setup is losing money lately or the news is bad",
 }
-RECORDS_VERSION = "v3"  # bump when the strategies change, so their records are recomputed
+RECORDS_VERSION = "v5"  # bump when the strategies change, so their records are recomputed
 SWING_TARGET_BAND = (10.0, 20.0)
 RECORDS_START = pd.Timestamp("2022-01-01")
 EXIT_SHORT = "half at target, rest on 20-EMA close"
@@ -116,6 +118,9 @@ class Idea:
     bull: list[str] = field(default_factory=list)
     bear: list[str] = field(default_factory=list)
     verdict: str = ""
+    tier: str = ""               # BEST / BETTER / GOOD / OK / AVOID (GOOD split by confirmations)
+    confirmations: list[str] = field(default_factory=list)
+    ud_ratio: float | None = None
     score: float = 0.0
     money_flow: str = ""          # in / flat / exempt / unknown (out is dropped)
     money_text: str = ""
@@ -159,11 +164,12 @@ def _size(capital: float, risk_pct: float, entry: float, stop: float, factor: fl
     return max(0, min(by_risk, by_cash))
 
 
-def _records(inds, market, stamp: str) -> dict:
-    """Each strategy's record over every allowed stock: since 2022, 12 and 6 months."""
+def _records(inds, market, stamp: str, min_turnover_cr: float | None = None, tag: str = "") -> dict:
+    """Each strategy's record over every allowed stock: since 2022, 12 and 6 months.
+    ``min_turnover_cr``: only signals on bars that traded at least that much (micro caps)."""
     folder = os.path.join(get_config()["data_cache_dir"], "bulk")
     os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, f"records-{RECORDS_VERSION}-{stamp}.json")
+    path = os.path.join(folder, f"records-{RECORDS_VERSION}{tag}-{stamp}.json")
     if os.path.exists(path):
         try:
             with open(path, encoding="utf-8") as fh:
@@ -183,7 +189,10 @@ def _records(inds, market, stamp: str) -> dict:
     for name in S.STRATEGIES:
         trades = []
         for ind in inds.values():
-            trades += S.backtest(name, ind, market, RECORDS_START)
+            got = S.backtest(name, ind, market, RECORDS_START)
+            if min_turnover_cr is not None:
+                got = [t for t in got if ind.at[t["signal_date"], "turnover_cr"] >= min_turnover_cr]
+            trades += got
         df = pd.DataFrame(trades)
         if df.empty:
             out[name] = {k: {"trades": 0} for k in ("all", "12m", "6m")}
@@ -198,11 +207,11 @@ def _records(inds, market, stamp: str) -> dict:
     return out
 
 
-def _grade(strategy: str, rec: dict) -> str:
+def _grade(strategy: str, rec: dict, min_year: int = 30, min_six: int = 15) -> str:
     """The strategy's standing from its live record across NSE: GOOD, OK or AVOID."""
     six, year = rec.get("6m", {}), rec.get("12m", {})
-    y = year.get("expectancy_r", -1) if year.get("trades", 0) >= 30 else -1
-    h = six.get("expectancy_r", -1) if six.get("trades", 0) >= 15 else -1
+    y = year.get("expectancy_r", -1) if year.get("trades", 0) >= min_year else -1
+    h = six.get("expectancy_r", -1) if six.get("trades", 0) >= min_six else -1
     if y > 0 and h >= 0:
         return "GOOD"
     if y > 0 or h > 0 or strategy == "breakout":  # breakouts held up in every tested period
@@ -247,7 +256,41 @@ def _news(idea: Idea, days: int = 10) -> None:
         idea.news_flag = f"neutral ({len(items)} headlines)"
 
 
-def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> None:
+# Micro caps are judged on the setup's record on micro caps alone (thinner, so lower
+# trade minimums), on the same scale as everything else, with a caution on top.
+MICRO_MIN_YEAR, MICRO_MIN_SIX = 15, 8
+MICRO_CAUTION = ("MICRO CAP caution: thin float, operator and circuit risk, the stop can gap "
+                 "badly; use half the size you would use on a bigger stock")
+
+# What lifts a GOOD setup to BETTER or BEST: each is a check successful traders use.
+WIN_RATE_MIN = 40.0      # the setup's own success rate over the last 12 months
+UD_MIN, UD_WEAK = 1.2, 0.8   # O'Neil's up/down volume ratio (50 days): accumulation vs distribution
+RS_MIN = 80.0            # IBD / Minervini relative-strength rank: a leader
+
+
+def confirmations(idea: "Idea", row: pd.Series, rec: dict) -> list[str]:
+    """The extra checks a GOOD setup passes, in plain words."""
+    out = []
+    win = rec.get("12m", {}).get("win_rate")
+    if win is not None and win == win and win >= WIN_RATE_MIN:
+        out.append(f"success rate {win:.0f}% over 12 months")
+    ud = row.get("ud_ratio")
+    if ud is not None and ud == ud and ud >= UD_MIN:
+        out.append(f"volume building up (up-day volume {ud:.2f}x down-day volume)")
+    rs = row.get("rs_rank")
+    if rs is not None and rs == rs and rs >= RS_MIN:
+        out.append(f"a market leader (RS rank {rs:.0f})")
+    return out
+
+
+def tier_of(grade: str, confirmed: list[str]) -> str:
+    """GOOD split by how many extra checks it passes: 3 BEST, 2 BETTER, else GOOD."""
+    if grade != "GOOD":
+        return grade
+    return {3: "BEST", 2: "BETTER"}.get(len(confirmed), "GOOD")
+
+
+def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict, mrec: dict | None = None) -> None:
     """A bull and a bear case built from the facts, so every idea is argued both ways."""
     rs = (row["ret126"] - market_row["nifty_ret126"]) * 100
     bull, bear = [], []
@@ -263,6 +306,11 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
     elif idea.strategy == "ep":
         bull.append(f"Episodic pivot: gapped {row['gap_pct']:.1f}% and closed {row['day_pct']:+.1f}% on "
                     f"{row['Volume'] / row['vol50']:.1f}x average volume: big news, big buyers.")
+    elif idea.strategy in ("retest", "ct"):
+        bull.append(f"Breakout + retest of the {S.RETEST_KINDS.get(int(row['rt_kind']), 'level')} at "
+                    f"{row['rt_level']:,.2f}: broke it {row['rt_age']:.0f} sessions ago, "
+                    f"pulled back to {row['rt_low']:,.2f} on {row['rt_pullvol']:.2f}x the breakout volume and held it; "
+                    "old resistance is now support.")
     else:
         bull.append(f"Kell EMA crossback: a stage-2 leader (RS rank {row['rs_rank']:.0f}) dipped to its 20 EMA "
                     "and closed back above the 10 EMA and the prior day's high.")
@@ -278,6 +326,8 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
         bull.append("Large cap: deep liquidity, tight spreads, stop fills close to the price.")
     elif idea.cap == "Small":
         bear.append("Small cap: wider swings and gap risk; the stop can fill worse than planned.")
+    elif idea.cap == "Micro":
+        bear.append("Micro cap (below the top 500): thin float, operator and circuit risk; the stop can gap.")
     year = rec.get("12m", {})
     if year.get("trades"):
         line = (f"{S.LABELS[idea.strategy]} across NSE, last 12 months: {year['trades']} trades, "
@@ -307,15 +357,31 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
         bull.append(f"Headlines supportive ({idea.news_flag[10:]}).")
     idea.bull, idea.bear = bull, bear
     # The verdict, in one plain sentence.
-    grade = _grade(idea.strategy, rec)
+    micro = idea.cap == "Micro"
+    if micro:
+        rec = mrec or {}
+        grade = _grade(idea.strategy, rec, MICRO_MIN_YEAR, MICRO_MIN_SIX)
+    else:
+        grade = _grade(idea.strategy, rec)
+    ud = row.get("ud_ratio")
+    idea.ud_ratio = _num(ud)
+    if ud is not None and ud == ud:
+        if ud >= UD_MIN:
+            bull.append(f"Volume building up: up-day volume is {ud:.2f}x down-day volume over 50 days (accumulation).")
+        elif ud < UD_WEAK:
+            bear.append(f"Down-day volume is heavier ({ud:.2f}x): sellers have been in control (distribution).")
     reasons = []
     if idea.news_flag.startswith("negative"):
         grade, reasons = "AVOID", [f"bad headlines ({idea.news_flag[10:]})"]
     else:
+        where = "on micro caps" if micro else "across NSE"
         if grade == "AVOID":
-            reasons.append("this setup has lost money across NSE over the last 6-12 months")
+            reasons.append(f"this setup has lost money {where} over the last 6-12 months")
         elif grade == "OK":
-            reasons.append(_record_reason(rec))
+            reasons.append(_record_reason(rec) + (" (micro-cap record)" if micro else ""))
+        if ud is not None and ud == ud and ud < UD_WEAK and grade == "GOOD":
+            grade = "OK"
+            reasons.append(f"down-day volume heavier than up-day ({ud:.2f}x)")
         if idea.money_flow in ("flat", "unknown"):
             grade = "OK" if grade == "GOOD" else grade
             reasons.append("money flow is flat (delivery % not rising)" if idea.money_flow == "flat"
@@ -330,16 +396,24 @@ def _debate(idea: Idea, row: pd.Series, market_row: pd.Series, rec: dict) -> Non
             grade = "OK"
             reasons.append("Nifty is still below its 200-DMA")
     idea.grade, idea.grade_meaning = grade, GRADE_MEANING[grade]
+    idea.confirmations = confirmations(idea, row, rec) if grade == "GOOD" else []
+    idea.tier = tier_of(grade, idea.confirmations)
     if grade == "GOOD":
         why = {"breakout": "the best-tested setup (made money in every period since 2017)"}.get(
-            idea.strategy, "this setup is making money across NSE lately")
+            idea.strategy, "this setup is making money " + ("on micro caps" if micro else "across NSE") + " lately")
         if idea.money_flow == "in":
             why += "; money flowing in"
-        idea.verdict = f"GOOD: {why}" + (f"; {'; '.join(reasons)}" if reasons else "")
+        if idea.confirmations:
+            why += "; " + "; ".join(idea.confirmations)
+        text = f"{idea.tier}: {why}" + (f"; {'; '.join(reasons)}" if reasons else "")
     elif grade == "OK":
-        idea.verdict = "OK, half size: " + ("; ".join(reasons) or "one risk to respect")
+        text = "OK, half size: " + ("; ".join(reasons) or "one risk to respect")
     else:
-        idea.verdict = "AVOID: " + "; ".join(reasons)
+        text = "AVOID: " + "; ".join(reasons)
+    if micro:
+        head, _, rest = text.partition(": ")
+        text = f"{head} (MICRO CAP): {rest}; {MICRO_CAUTION}"
+    idea.verdict = text
 
 
 def _num(v) -> float | None:
@@ -409,13 +483,19 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
     nifty = md.nifty
     market = E.market_frame(nifty, md.stocks)
     inds = {s: S.indicators(d) for s, d in md.stocks.items()}
-    S.add_rs_rank(inds)
+    micro_inds = {s: S.indicators(d) for s, d in getattr(md, "micro", {}).items()}
+    S.add_rs_rank(inds, micro_inds)
     deliv = _delivery(market.index)
-    for sym, ind in inds.items():
+    for sym, ind in {**inds, **micro_inds}.items():
         col = sym.removesuffix(".NS")
         S.add_delivery(ind, deliv[col] if col in deliv else None)
     records = _records(inds, market, f"{md.last.isoformat()}-{len(inds)}")
+    micro_records = (_records(micro_inds, market, f"{md.last.isoformat()}-{len(micro_inds)}",
+                              min_turnover_cr=data_mod.MICRO_MIN_TURNOVER_CR, tag="-micro")
+                     if micro_inds else {})
+    core_inds = dict(inds)
     inds.update({s: S.indicators(d) for s, d in md.etfs.items()})
+    inds.update(micro_inds)
     day = market.index[-1]
     mrow = market.iloc[-1]
 
@@ -430,6 +510,8 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
             continue
         tail = ind.iloc[-260:]
         row = ind.iloc[-1]
+        if sym in micro_inds and not row["turnover_cr"] >= data_mod.MICRO_MIN_TURNOVER_CR:
+            continue
         for name in S.STRATEGIES:
             if not bool(S.signals(name, tail, market).iloc[-1]):
                 continue
@@ -439,7 +521,10 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
             mf = S.money_flow(name, row) if sym not in md.etfs else "unknown"
             if mf == "out":
                 continue  # money leaving (delivery % falling): the worst group in every period
-            grade = _grade(name, records[name])
+            if sym in micro_inds:
+                grade = _grade(name, micro_records.get(name, {}), MICRO_MIN_YEAR, MICRO_MIN_SIX)
+            else:
+                grade = _grade(name, records[name])
             factor = 1.0 if grade == "GOOD" else 0.5
             target = s.target if s.target is not None else s.entry
             reward = target - s.entry
@@ -475,7 +560,7 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
                 + (0 if rs is None or rs != rs else (rs - 50) / 50)   # leaders first
                 - idea.risk_pct * 0.2
                 + min(rr, 3) * 0.3
-                + {"Large": 0.3, "Mid": 0.2, "Small": 0.0, "ETF": 0.3}.get(idea.cap, 0.0)
+                + {"Large": 0.3, "Mid": 0.2, "Small": 0.0, "ETF": 0.3, "Micro": -0.5}.get(idea.cap, 0.0)
                 + {"in": 1.0, "exempt": 0.3}.get(mf, 0.0)
             )
             raw_ideas.append((idea, row))
@@ -505,8 +590,11 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
         shortlist = list(pool.map(enrich, shortlist))
     for idea, row in shortlist:
         before = GRADE_ORDER[idea.grade]
-        _debate(idea, row, mrow, records[idea.strategy])
+        _debate(idea, row, mrow, records[idea.strategy], micro_records.get(idea.strategy))
         idea.score -= (GRADE_ORDER[idea.grade] - before) * 10 + (1 if idea.earnings_in_window else 0)
+    tier_bonus = {"BEST": 2.0, "BETTER": 1.0}
+    for idea, _ in shortlist:
+        idea.score += tier_bonus.get(idea.tier, 0.0)
     shortlist.sort(key=lambda x: x[0].score, reverse=True)
     ideas = [i for i, _ in shortlist[:top]]
     for n, idea in enumerate(ideas, 1):
@@ -538,7 +626,9 @@ def run_daily(capital: float = 500_000.0, risk_pct: float = 1.0, top: int = 10,
         "scanned": len(md.stocks),
         "etfs_scanned": len(md.etfs),
         "records": records,
-        "money": money_snapshot(inds, market, universe, todays_deals),
+        "micro_records": micro_records,
+        "micro_scanned": len(micro_inds),
+        "money": money_snapshot(core_inds, market, universe, todays_deals),
         "notes": notes,
         "capital": capital, "risk_pct": risk_pct,
     }, default=float))

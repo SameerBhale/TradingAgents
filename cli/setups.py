@@ -1,11 +1,14 @@
 """`tradingagents setups`: the short list, in two tables.
 
-1. SWING (short term, days to weeks): the top 5 setups from five strategies (52-week
-   breakout, Minervini VCP, Qullamaggie flag and episodic pivot, Kell EMA crossback),
+1. SWING (short term, days to weeks): the top 5 setups from six strategies (52-week
+   breakout, Minervini VCP, Qullamaggie flag and episodic pivot, Kell EMA crossback,
+   breakout + retest),
    stop 5-10%, target 10-20%, each with a plain GOOD / OK / AVOID verdict.
 2. VALUE (medium to long term, 3-12 months): the top 3 quality-growth stocks at a fair
    price in a stage-2 uptrend, with concall headlines.
 
+Micro caps trading Rs 25 crore+ a day are included (`--no-micro` leaves them out); they
+are never GOOD and their verdict starts with a MICRO CAP caution.
 `--with-core` adds the momentum core portfolio. Every call is logged for
 `tradingagents calls review`.
 """
@@ -31,13 +34,13 @@ def _held_momentum() -> dict[str, float]:
 
 
 def build(top: int = 5, value_top: int = 3, refresh: bool = False, no_news: bool = False,
-          with_core: bool = False, mode: str = "balanced", progress=None) -> dict:
+          with_core: bool = False, mode: str = "balanced", progress=None, micro: bool = True) -> dict:
     from tradingagents import calls
     from tradingagents.scanner import data as data_mod
     from tradingagents.scanner.daily import run_daily
     from tradingagents.scanner.value import value_picks
 
-    md = data_mod.load(refresh=refresh, progress=progress)
+    md = data_mod.load(refresh=refresh, progress=progress, with_micro=micro)
     swing = run_daily(capital=_NOMINAL_CAPITAL, risk_pct=1.0, top=top, with_news=not no_news, md=md)
     value = value_picks(md, top=value_top, with_news=not no_news) if value_top else {"picks": []}
     for v in value["picks"]:
@@ -55,6 +58,8 @@ def build(top: int = 5, value_top: int = 3, refresh: bool = False, no_news: bool
 
 def value_verdict(v: dict) -> str:
     concerns = []
+    if v.get("cap") == "Micro":
+        concerns.append("MICRO CAP, extra caution: thin float, operator risk, weaker free data; small size only")
     if v.get("cap") == "Small":
         concerns.append("small cap: bigger swings")
     if (v.get("earnings_growth_pct") or 0) > 100:
@@ -90,7 +95,9 @@ def _money(i: dict) -> str:
     return {"exempt": "n/a (news)", "unknown": "no data"}.get(mf, "-")
 
 
-def _record(i: dict, records: dict) -> str:
+def _record(i: dict, records: dict, micro_records: dict | None = None) -> str:
+    if i.get("cap") == "Micro" and micro_records:
+        records = micro_records
     rec = records.get(i["strategy"], {}).get("12m", {})
     if not rec.get("trades"):
         return "-"
@@ -105,7 +112,8 @@ def render_markdown(r: dict) -> str:
         f"# Trade setups - {r['as_of']} close",
         "",
         f"Nifty 50 {m['nifty']:,} ({trend} its 200-DMA {m['nifty_sma200']:,}; 50-DMA {m['nifty_sma50']:,}) | "
-        f"{m['breadth_pct']:.0f}% of stocks above their 200-DMA",
+        f"{m['breadth_pct']:.0f}% of stocks above their 200-DMA | scanned {swing.get('scanned', 0)} large/mid/small "
+        f"+ {swing.get('micro_scanned', 0)} liquid micro caps",
         *[f"> {n}" for n in swing["notes"]],
         "",
         f"## SWING - top {len(swing['ideas'])} (short term: days to weeks; stop 5-10%, target 10-20%, "
@@ -118,7 +126,7 @@ def render_markdown(r: dict) -> str:
     for i in swing["ideas"]:
         out.append(
             f"| {i['rank']} | {i['name']} | {i['symbol'].removesuffix('.NS')} | {i['cap']} | {i['strategy_label']} | "
-            f"{_money(i)} | {_record(i, swing['records'])} | **{i['verdict']}** | {i['entry']:,.2f} ({i['max_entry']:,.2f}) | {i['stop']:,.2f} (-{i['risk_pct']:.1f}%) | "
+            f"{_money(i)} | {_record(i, swing['records'], swing.get('micro_records'))} | **{i['verdict']}** | {i['entry']:,.2f} ({i['max_entry']:,.2f}) | {i['stop']:,.2f} (-{i['risk_pct']:.1f}%) | "
             f"{i['target']:,.2f} (+{i['reward_pct']:.1f}%) | {_exit_text(i)} | {_hold(i, swing['records'])} |"
         )
     if not swing["ideas"]:
@@ -170,7 +178,8 @@ def render_markdown(r: dict) -> str:
     out += [
         "",
         "Verdicts: **GOOD** take it; **OK** one risk to respect, half size; **AVOID** the setup is losing money "
-        "across NSE lately or the news is bad. Money flow: delivery % trend (20-day vs 100-day average); IN is "
+        "across NSE lately or the news is bad. **MICRO CAP** rows are never GOOD and are judged on the setup's "
+        "record on micro caps alone; quarter size at most. Money flow: delivery % trend (20-day vs 100-day average); IN is "
         "1.05x or more, money OUT setups are dropped. Swing entry: a stop-limit buy (trigger = buy above, "
         "limit = max) before 09:15; after the fill, a GTT OCO with the stoploss and the target for HALF the "
         "shares. When the target fills, move the stop on the rest to your buy price and sell it on a close below "
@@ -180,12 +189,12 @@ def render_markdown(r: dict) -> str:
 
 
 def setups_command(top: int, value_top: int, refresh: bool, as_json: bool, markdown: bool, no_news: bool,
-                   with_core: bool = False, mode: str = "balanced") -> int:
+                   with_core: bool = False, mode: str = "balanced", micro: bool = True) -> int:
     def progress(done, total):
         if not (as_json or markdown):
             console.print(f"[dim]Downloading daily bars {done}/{total}...[/dim]")
 
-    r = build(top, value_top, refresh, no_news, with_core, mode, progress)
+    r = build(top, value_top, refresh, no_news, with_core, mode, progress, micro)
     stem = os.path.join(scans_dir(), f"setups-{r['as_of']}")
     md_text = render_markdown(r)
     with open(stem + ".json", "w", encoding="utf-8") as fh:

@@ -3,15 +3,15 @@ name: trade-setups
 description: >-
   NSE trade list in two short tables: the top 5 swing setups (short term; stop
   5-10%, target 10-20% for half, the rest trailed on the 20 EMA, no time limit;
-  filtered by NSE delivery-% money flow) from five strategies taken from champion traders
-  (52-week breakout, Minervini VCP, Qullamaggie flag and episodic pivot, Oliver
-  Kell EMA crossback), and the top 3 value buys (medium/long term, 3-12 months;
+  filtered by NSE delivery-% money flow) from six strategies (52-week breakout,
+  Minervini VCP, Qullamaggie flag and episodic pivot, Oliver Kell EMA crossback,
+  breakout + retest), micro caps trading Rs 25 crore+ a day included with a caution, and the top 3 value buys (medium/long term, 3-12 months;
   quality growth at a fair price in a stage-2 uptrend, with concall headlines).
   Every row has name, ticker, cap, entry, stoploss, target, exit, holding time and
   a plain GOOD / OK / AVOID verdict. No money or quantity. Free data, no API key.
   Use for /trade-setups, /trade-setup, "setups", "what to buy", "swing setups",
   "value buy", "how long to hold".
-argument-hint: "[--top 5] [--value 3] [--with-core] [--refresh]"
+argument-hint: "[--top 5] [--value 3] [--with-core] [--no-micro] [--refresh]"
 ---
 
 # trade-setups
@@ -38,15 +38,34 @@ The header line and notes, then the tables exactly as printed: **SWING** (short 
 institutional bulk/block deals; not buy signals) and **VALUE** (medium to long term). Do not add capital, money, quantity or sizing
 columns, and do not ask how much the user wants to invest.
 
-Verdicts, in plain words (they replace the old grades and the auditor):
-- **GOOD**: this setup is making money across NSE lately; take it.
+Verdicts, in plain words, best first (the `tier` field; `grade` stays GOOD/OK/AVOID):
+- **BEST**: GOOD plus all three extra checks: the setup's success rate is 40%+ over 12
+  months, volume is building up (up-day volume 1.2x+ down-day volume over 50 days,
+  O'Neil's accumulation test) and the stock is a leader (RS rank 80+). Full size.
+- **BETTER**: GOOD plus two of those checks. Full size.
+- **GOOD**: the setup is making money lately, funds are taking delivery (money flow IN),
+  no results inside the hold, the news is clean. Full size.
 - **OK**: one risk to respect (money flow flat, results inside the typical hold, a mixed
-  or too-thin recent record, an institution selling, or the Nifty below its 200-DMA); half size.
+  or too-thin recent record, an institution selling, down-day volume heavier, or the
+  Nifty below its 200-DMA); half size.
+- **AVOID**: the setup is losing money lately, or the news is bad.
 
 Money flow (docs/STRATEGY.md): delivery % 20-day average / 100-day average. IN (>= 1.05)
 is needed for GOOD; flat caps it at OK; OUT is dropped by the scanner. Explain it as
 "funds are taking delivery" in plain words.
-- **AVOID**: the setup is losing money across NSE lately, or the news is bad.
+
+**Micro caps** (below the top 500, scanned only when they trade Rs 25 crore+ a day) get
+the same scale, judged on the setup's record on micro caps alone, and the verdict says
+"(MICRO CAP)" with a caution: thin float, operator and circuit risk, the stop can gap;
+half the size you would use on a bigger stock. Always repeat that caution in plain words.
+`--no-micro` leaves them out.
+
+Breakout + retest setups (`retest` for horizontal levels, `ct` for trendlines): a fresh
+breakout on 1.5x volume after 20+ sessions under the level, a move 4%+ above it, a
+lighter-volume pullback that tests the level and holds it, then a bounce over the prior
+day's high. Old resistance turned support. The level is one of: all-time high, 52-week
+high, flag and pole, ascending triangle, cup and handle / base rim, or a CT (falling
+trendline); the Bull line names which.
 
 ## 3. Bull / Bear / Judge (short)
 
