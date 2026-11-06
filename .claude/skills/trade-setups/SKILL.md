@@ -35,7 +35,16 @@ last session, say so and re-run with `--refresh` after 18:00.
 
 The header line and notes, then the tables exactly as printed: **SWING** (short term),
 **MONEY FLOW** (watch list: stage-2 leaders where delivery % is rising, plus today's
-institutional bulk/block deals; not buy signals) and **VALUE** (medium to long term). Do not add capital, money, quantity or sizing
+institutional bulk/block deals; not buy signals), **VALUE** (medium to long term) and
+**MULTIBAGGER CANDIDATES** (3-5 years). The candidate list is saved in
+`~/.tradingagents/multibaggers.json` and grows: each run adds stocks that pass every
+SQGLP / 100-bagger test (Rs 500-30,000 cr market cap, ROE >= 18%, debt/equity <= 50%,
+margin >= 12%, cash flow positive, 3-year sales CAGR >= 15% and profit CAGR >= 20%, sales up
+every year, P/E <= 60, PEG <= 1.5, above a rising 200-DMA). Status: NEW (added today), HOLD
+(still passes), REVIEW (one test failing, reason shown), REMOVED (the story broke: ROE < 12%,
+sales growth < 8%, debt/equity > 100%, or 35% under the added price and below the 200-DMA).
+Plan: buy in 3 parts over 3-6 months near the 50-DMA, review every quarterly result, sell
+only on REMOVED. A value pick that is also on the list carries the tag. Not backtested. Do not add capital, money, quantity or sizing
 columns, and do not ask how much the user wants to invest.
 
 Verdicts, in plain words, best first (the `tier` field; `grade` stays GOOD/OK/AVOID):
@@ -129,7 +138,8 @@ Suggest a rule change only when a group has 20 or more closed calls.
 
 ## Rules
 
-- Never say "sure", "guaranteed" or "multibagger". Champion returns (Kell +941%,
+- Never say "sure" or "guaranteed", and never call a stock a multibagger: only "multibagger
+  candidate" (the list's label), and say most candidates will not become one. Champion returns (Kell +941%,
   Minervini +155%) came from concentration, leverage and discretion; the mechanical
   versions here earn a small edge per trade (docs/STRATEGY.md).
 - Not investment advice; the user places every order.

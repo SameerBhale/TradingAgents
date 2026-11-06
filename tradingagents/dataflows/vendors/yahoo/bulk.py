@@ -188,6 +188,60 @@ def fundamentals_snapshot(symbols: list[str], stamp: str, workers: int = 8) -> d
     return {s: cache.get(s, {}) for s in symbols}
 
 
+def _statement_row(df: pd.DataFrame, names: tuple[str, ...]) -> list[float] | None:
+    """The first matching row of a Yahoo statement, oldest year first (NaN dropped)."""
+    for n in names:
+        if n in df.index:
+            row = df.loc[n].dropna()
+            if len(row):
+                return [float(x) for x in row.sort_index().to_numpy()]
+    return None
+
+
+def annual_statements(symbols: list[str], stamp: str, workers: int = 6) -> dict[str, dict]:
+    """Up to four years of annual ``sales``, ``profit``, ``ocf`` and ``fcf`` per symbol,
+    oldest first. Cached by month (``stamp[:7]``): annual results change once a year."""
+    import concurrent.futures as cf
+    import json
+
+    folder = os.path.join(get_config()["data_cache_dir"], "bulk")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"annual-{stamp[:7]}.json")
+    cache: dict[str, dict] = {}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                cache = json.load(fh)
+        except (OSError, ValueError):
+            cache = {}
+    missing = [s for s in symbols if s not in cache]
+
+    def one(sym):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                t = yf.Ticker(sym)
+                inc, cfs = t.income_stmt, t.cashflow
+        except Exception:  # unavailable: an empty record
+            return sym, {}
+        rec = {}
+        if inc is not None and not inc.empty:
+            rec["sales"] = _statement_row(inc, ("Total Revenue", "Operating Revenue"))
+            rec["profit"] = _statement_row(inc, ("Net Income", "Net Income Common Stockholders"))
+        if cfs is not None and not cfs.empty:
+            rec["ocf"] = _statement_row(cfs, ("Operating Cash Flow",))
+            rec["fcf"] = _statement_row(cfs, ("Free Cash Flow",))
+        return sym, rec
+
+    if missing:
+        with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+            for sym, rec in pool.map(one, missing):
+                cache[sym] = rec
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(cache, fh)
+    return {s: cache.get(s, {}) for s in symbols}
+
+
 def intraday_quotes(symbols: list[str]) -> dict[str, dict]:
     """Today's open, last price, high and volume from Yahoo's 5-minute bars."""
     out: dict[str, dict] = {}

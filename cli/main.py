@@ -231,7 +231,9 @@ def setups(
     markdown: bool = typer.Option(False, "--markdown", help="Print the tables as Markdown"),
     no_news: bool = typer.Option(False, "--no-news", help="Skip headlines and concall news (faster)"),
     micro: bool = typer.Option(True, "--micro/--no-micro",
-                               help="Include micro caps trading Rs 25 crore+ a day (never GOOD; cautioned)"),
+                               help="Include micro caps trading Rs 25 crore+ a day (cautioned)"),
+    multibagger: bool = typer.Option(True, "--multibagger/--no-multibagger",
+                                     help="Update and show the 3-5 year multibagger-candidate list"),
 ):
     """Top 5 swing setups (short term) and top 3 value buys (medium/long term).
 
@@ -242,7 +244,8 @@ def setups(
     from cli.setups import setups_command
 
     try:
-        code = setups_command(top, value, refresh, as_json, markdown, no_news, with_core, mode.lower(), micro)
+        code = setups_command(top, value, refresh, as_json, markdown, no_news, with_core, mode.lower(), micro,
+                              multibagger)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
